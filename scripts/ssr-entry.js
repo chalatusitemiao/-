@@ -12,6 +12,7 @@ import DriverForm from '../src/components/DriverForm.vue'
 import DriverImport from '../src/components/DriverImport.vue'
 import RouteForm from '../src/components/RouteForm.vue'
 import TripForm from '../src/components/TripForm.vue'
+import CostForm from '../src/components/CostForm.vue'
 import { current, TABS } from '../src/router.js'
 import {
   vehicles, vehicleMap, addVehicle, updateVehicle, removeVehicle, importVehicles,
@@ -44,6 +45,12 @@ import {
   trips, tripMap, addTrip, updateTrip, removeTrip, clearAll as clearTrips, findTrip, removeTripsByRoute,
   setTripSettled, setSettledBulk,
 } from '../src/store/trips.js'
+import {
+  costs, costMap, addCost, updateCost, removeCost, removeCostsByVehicle,
+  clearAll as clearCosts, findCost, nextCostId,
+} from '../src/store/costs.js'
+import { validateCost } from '../src/utils/costRules.js'
+import { costSummary, costBreakdown } from '../src/utils/costModel.js'
 import {
   fuelRate, aggregateTrips, isSuspicious,
   fuelPerTon100km, fuelPer100km, tonHundredKm,
@@ -439,7 +446,7 @@ console.log('\n=== 校验规则 ===')
 }
 
 console.log('\n=== 司机模块 · 菜单 ===')
-eq('TABS 有五项', TABS.map((t) => t.name), ['车辆管理', '司机管理', '路线管理', '趟次管理', '收入'])
+eq('TABS 有六项', TABS.map((t) => t.name), ['车辆管理', '司机管理', '路线管理', '趟次管理', '收入', '成本'])
 eq('司机入口路径', TABS[1].path, '/drivers')
 {
   clearDrivers()
@@ -689,7 +696,7 @@ console.log('\n=== 路线模块 ===')
   const rp = await mount(App, undefined, '路线页 · 空库', 2500)
   if (rp) {
     ok('菜单里有「路线管理」', rp.includes('路线管理'))
-    ok('五个菜单项都在', ['车辆管理', '司机管理', '路线管理', '趟次管理', '收入'].every((n) => rp.includes(n)))
+    ok('六个菜单项都在', ['车辆管理', '司机管理', '路线管理', '趟次管理', '收入', '成本'].every((n) => rp.includes(n)))
     ok('空库时给出引导文案', rp.includes('还没有路线数据'))
     ok('空库时提供「录入路线」', rp.includes('录入路线'))
     notContains('路线页没有「载入演示数据」', rp, '载入演示数据')
@@ -923,6 +930,119 @@ console.log('\n=== 收入 · 运费结算 ===')
   clearAll()
   clearDrivers()
 }
+console.log('\n=== 成本模块 ===')
+{
+  clearTrips()
+  clearRoutes()
+  clearCosts()
+  clearDrivers()
+  clearAll()
+  current.value = '/costs'
+  location.hash = '#/costs'
+
+  const empty = await mount(App, undefined, '成本页 · 空库', 2600)
+  if (empty) {
+    ok('菜单里有「成本」', empty.includes('成本'))
+    ok('空库时给出成本来源说明', empty.includes('还没有任何成本数据'))
+    ok('说明了成本来自四处', empty.includes('折旧') && empty.includes('工资') && empty.includes('油耗'))
+  }
+
+  // 造数据：一台在提折旧的车、一位有工资的司机、一趟有油价的趟次、三笔手工成本
+  const v1 = addVehicle({ plate: '苏E·CST01', type: '牵引车', tonnage: 32, price: 418000, buyDate: '2022-03-18', odo: 1000 })
+  const d1 = addDriver({ name: '成本测试', phone: '13700002222', hireDate: '2022-01-01', licenseNo: '', salary: 8800 })
+  const r1 = addRoute({ from: '南京', to: '杭州', distance: 280, tolls: [{ station: '南京', prices: { 牵引车: 120 } }] })
+  const TODAY_ISO = toISO(new Date())
+  const THIS_MONTH = TODAY_ISO.slice(0, 7)
+  addTrip({ date: TODAY_ISO, routeId: r1.id, vehicleId: v1.id, type: '牵引车', driverId: d1.id, tonnage: 30, actualFuel: 100, fuelPrice: 7.5, toll: 120, distance: 280, revenue: 3000 })
+
+  const c1 = addCost({ date: TODAY_ISO, purpose: 'part', vehicleId: v1.id, amount: '4200', note: '四条轮胎' })
+  const c2 = addCost({ date: TODAY_ISO, purpose: 'doc', vehicleId: v1.id, amount: '1800', note: '年检' })
+  const c3 = addCost({ date: TODAY_ISO, purpose: 'other', vehicleId: v1.id, amount: '3000', note: '仓库月租' })
+  eq('手工成本入库 3 笔', costs.length, 3)
+  eq('「其他」不挂车（表单里带的 id 被清掉）', findCost(c3.id).vehicleId, '')
+  eq('配件挂车', findCost(c1.id).vehicleId, v1.id)
+  eq('编号连续', [c1.id, c2.id, c3.id], ['C0001', 'C0002', 'C0003'])
+
+  // 汇总：折旧 + 人工 + 油耗 + 过路费 + 手工
+  const s = costSummary({ vehicles, drivers, trips, costs }, THIS_MONTH)
+  ok('折旧 > 0', s.depreciation > 0, String(s.depreciation))
+  eq('人工 = 工资', s.staff, 8800)
+  eq('油耗 = 100 × 7.5', s.fuel, 750)
+  eq('过路费 = 120', s.toll, 120)
+  eq('手工 = 4200 + 1800 + 3000', s.manual, 9000)
+  eq('按用途拆分', s.byPurpose, { part: 4200, doc: 1800, other: 3000 })
+  const row = s.vehicleRows.find((v) => v.id === v1.id)
+  eq('该车配件成本', row.part, 4200)
+  eq('该车证件成本', row.doc, 1800)
+  eq('该车手工只含配件+证件（其他不算进来）', row.manual, 6000)
+  eq('该车油耗', row.fuel, 750)
+  ok('饼图有数据', costBreakdown(s).length >= 5, String(costBreakdown(s).length))
+
+  const page = await mount(App, undefined, '成本页 · 有数据', 3200)
+  if (page) {
+    for (const k of ['本月总成本', '车辆折旧', '员工成本', '油耗成本', '手工成本']) ok(`有「${k}」卡`, page.includes(k))
+    ok('有成本构成饼图', page.includes('成本构成') && page.includes('donut__arc'))
+    ok('饼图画的是 SVG 圆环', page.includes('<circle') && page.includes('stroke-dasharray'))
+    ok('饼图图例带占比', page.includes('donut__legend') && page.includes('%'))
+    ok('有按车辆的成本榜', page.includes('按车辆') && page.includes('bars'))
+    ok('按车辆的条是分段堆叠的', page.includes('bar__seg'))
+    ok('有手工成本明细', page.includes('手工录入的成本'))
+    ok('明细里有三笔', page.includes('四条轮胎') && page.includes('年检') && page.includes('仓库月租'))
+    ok('用途标签区分颜色', page.includes('ptag--part') && page.includes('ptag--doc') && page.includes('ptag--other'))
+    ok('「其他」显示为不挂车', page.includes('不挂车'))
+    ok('有添加成本入口', page.includes('添加成本'))
+    ok('说明里点出折旧口径', page.includes('5 年直线法') && page.includes('残值 10%'))
+    ok('说明里点出没填单价会让油耗成本偏低', page.includes('没填单价的趟次算不出油费'))
+  }
+
+  // 表单：用途决定要不要选车
+  const cf1 = await mount(CostForm, { open: true, cost: null }, '成本表单 · 新增', 500)
+  if (cf1) {
+    for (const k of ['用途', '发生日期', '金额', '备注']) ok(`表单有「${k}」`, cf1.includes(k))
+    for (const k of ['车辆配件', '车辆证件', '其他']) ok(`用途可选「${k}」`, cf1.includes(k))
+    ok('没选用途时不显示车辆选择', !cf1.includes('挂到哪台车'))
+    ok('提示挂车的用途打了标记', cf1.includes('挂车'))
+  }
+  const cf2 = await mount(CostForm, { open: true, cost: findCost(c1.id) }, '成本表单 · 配件预填', 500)
+  if (cf2) {
+    ok('配件用途会要求选车', cf2.includes('挂到哪台车'))
+    ok('回填了金额', cf2.includes('4200'))
+    ok('回填了备注', cf2.includes('四条轮胎'))
+  }
+  const cf3 = await mount(CostForm, { open: true, cost: findCost(c3.id) }, '成本表单 · 其他预填', 500)
+  if (cf3) {
+    ok('「其他」不显示车辆选择', !cf3.includes('挂到哪台车'))
+    ok('「其他」的备注占位提示是什么支出', cf3.includes('这笔是什么支出'))
+  }
+
+  // 编辑与删除
+  updateCost(c1.id, { date: TODAY_ISO, purpose: 'part', vehicleId: v1.id, amount: '5000', note: '换了六条胎' })
+  eq('编辑生效：金额', findCost(c1.id).amount, 5000)
+  eq('编辑生效：备注', findCost(c1.id).note, '换了六条胎')
+  removeCost(c2.id)
+  eq('删除一笔后剩两笔', costs.length, 2)
+  eq('删掉的查不到', findCost(c2.id), null)
+
+  // 改用途时要清掉车辆
+  updateCost(c3.id, { date: TODAY_ISO, purpose: 'part', vehicleId: v1.id, amount: '3000', note: 'x' })
+  eq('改成配件后挂上了车', findCost(c3.id).vehicleId, v1.id)
+  updateCost(c3.id, { date: TODAY_ISO, purpose: 'other', vehicleId: v1.id, amount: '3000', note: 'x' })
+  eq('再改回「其他」时车辆被清掉', findCost(c3.id).vehicleId, '')
+
+  // 删车时挂在它身上的成本一起清掉，避免孤儿记录
+  addCost({ date: TODAY_ISO, purpose: 'part', vehicleId: v1.id, amount: '100', note: '待清理' })
+  const before = costs.length
+  const removed = removeCostsByVehicle(v1.id)
+  ok('删车的成本清理函数有效', removed >= 2, `清掉 ${removed} 笔 / 原有 ${before} 笔`)
+  eq('清理后没有记录再指向该车', costs.filter((c) => c.vehicleId === v1.id).length, 0)
+
+  clearCosts()
+  clearTrips()
+  clearRoutes()
+  clearDrivers()
+  clearAll()
+}
+
 console.log('\n=== 趟次表单 / CRUD ===')
 {
   const tf = await mount(TripForm, { open: true, trip: null }, '趟次表单 · 新增')

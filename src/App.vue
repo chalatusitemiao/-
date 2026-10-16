@@ -7,9 +7,17 @@ import Drivers from './views/Drivers.vue'
 import Routes from './views/Routes.vue'
 import Trips from './views/Trips.vue'
 import Income from './views/Income.vue'
+import Costs from './views/Costs.vue'
 
 /* 模块 → 页面。加模块时这里补一行 */
-const VIEWS = { '/': Vehicles, '/drivers': Drivers, '/routes': Routes, '/trips': Trips, '/income': Income }
+const VIEWS = {
+  '/': Vehicles,
+  '/drivers': Drivers,
+  '/routes': Routes,
+  '/trips': Trips,
+  '/income': Income,
+  '/costs': Costs,
+}
 const view = computed(() => VIEWS[route.value] || Vehicles)
 
 const todayStr = computed(() => {

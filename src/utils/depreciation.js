@@ -68,3 +68,27 @@ export function depreciation(price, buyDate, today = new Date()) {
     fully: used >= DEP_YEARS * 12,
   }
 }
+
+/**
+ * **某个自然月应计提的折旧额**（成本模块按月份汇总时用）。
+ *
+ * 跟 `monthlyDepreciation` 的区别：这个带时间判断 ——
+ *   · 那个月还没买这辆车 → 0（不能把买车之前的折旧也算进去）
+ *   · 到那个月已经提满 5 年 → 0（提满之后不再计提，账面停在残值）
+ *
+ * @param asOf 该月的最后一天（或任意落在那个月里的日期）
+ */
+export function monthlyDepreciationAt(price, buyDate, asOf = new Date()) {
+  const d = parseDate(buyDate)
+  if (!d) return 0
+  const end = new Date(asOf.getFullYear(), asOf.getMonth() + 1, 0) // 当月最后一天
+  if (d.getTime() > end.getTime()) return 0 // 当月还没这辆车
+  return isFullyDepreciated(buyDate, end) ? 0 : monthlyDepreciation(price)
+}
+
+/** 'YYYY-MM' → 该月最后一天（本地时区） */
+export function monthEnd(month) {
+  const [y, m] = String(month).split('-').map(Number)
+  if (!y || !m) return new Date()
+  return new Date(y, m, 0)
+}

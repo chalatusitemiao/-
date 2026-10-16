@@ -10,6 +10,9 @@ import { readSheet, parseCsv } from '../src/utils/sheet.js'
 import { matchColumns, buildDrafts, summarizeDrafts, coerceRow, templateCsv } from '../src/utils/vehicleImport.js'
 import { FIELDS, normalizePlate, validateVehicle, parseNumber, normalizeCarType, PLATE_RE } from '../src/utils/vehicleRules.js'
 import { parseDate, toISODate, excelSerialToDate, monthsBetween } from '../src/utils/date.js'
+import { monthlyDepreciationAt, monthEnd } from '../src/utils/depreciation.js'
+import { validateCost, toCostPayload } from '../src/utils/costRules.js'
+import { costSummary, costBreakdown, availableMonths, monthOf, inMonth } from '../src/utils/costModel.js'
 import { isDateInput, openDatePicker } from '../src/utils/datePicker.js'
 import {
   depreciation, monthlyDepreciation, netBookValue, ageYears, isFullyDepreciated,
@@ -560,6 +563,7 @@ console.log('\n=== 校验规则清单（防止某条规则被静默删掉）==='
   const D = (o) => validateDriver({ name: '陈志强', phone: '13801234567', hireDate: '2019-03-11', licenseNo: '', ...o }, { today: T }).errors
   const I = (o) => validateIncident({ date: '2025-01-01', desc: '测试事故', loss: '100', ...o }, { today: T }).errors
   const P = (o) => validateTrip({ date: '2026-10-01', routeId: 'R01', vehicleId: 'V01', type: '自卸车', driverId: 'D01', tonnage: '30', actualFuel: '48', distance: '132', ...o }, { today: T }).errors
+  const K = (o) => validateCost({ date: '2026-10-10', purpose: 'part', vehicleId: 'V1', amount: '1200', note: '', ...o }, { today: T }).errors
   const R = (o) => validateRoute({ from: '南京', to: '合肥', distance: '165', ...o }, {}).errors
 
   const inventory = {
@@ -632,9 +636,22 @@ console.log('\n=== 校验规则清单（防止某条规则被静默删掉）==='
       ['公里数须为正', R({ distance: '0' }).distance],
       ['公里数超限', R({ distance: '99999' }).distance],
     ],
+    成本: [
+      ['日期必填', K({ date: '' }).date],
+      ['日期格式', K({ date: '不是日期' }).date],
+      ['日期不能未来', K({ date: '2099-01-01' }).date],
+      ['用途必填', K({ purpose: '' }).purpose],
+      ['用途须在枚举内', K({ purpose: '瞎写的用途' }).purpose],
+      ['配件必须挂车', K({ purpose: 'part', vehicleId: '' }).vehicleId],
+      ['证件必须挂车', K({ purpose: 'doc', vehicleId: '' }).vehicleId],
+      ['金额必填', K({ amount: '' }).amount],
+      ['金额非数字', K({ amount: 'x' }).amount],
+      ['金额须为正', K({ amount: '0' }).amount],
+      ['金额超上限', K({ amount: '99999999' }).amount],
+    ],
   }
   const total = Object.values(inventory).reduce((a, r) => a + r.length, 0)
-  ok('清单覆盖了 5 个表单的规则', Object.keys(inventory).length === 5 && total >= 50, `${total} 条`)
+  ok('清单覆盖了 6 个表单的规则', Object.keys(inventory).length === 6 && total >= 60, `${total} 条`)
   for (const [group, rows] of Object.entries(inventory)) {
     const lost = rows.filter(([, msg]) => !msg).map(([label]) => label)
     eq(`${group}校验：${rows.length} 条规则全在`, lost, [])
@@ -675,6 +692,139 @@ console.log('\n=== 油费单价与结算状态 ===')
   ok('油费单价在字段定义里', TRIP_FIELDS.some((f) => f.key === 'fuelPrice'))
   ok('结算状态是勾选类型', TRIP_FIELDS.some((f) => f.key === 'settled' && f.type === 'checkbox'))
 }
+console.log('\n=== 成本：折旧的时点计提 ===')
+{
+  // 成本要按月看，所以「这个月该提多少」不能简单等于月折旧额
+  eq('买于当月之前 → 正常计提', monthlyDepreciationAt(418000, '2022-03-18', monthEnd('2026-10')), 6270)
+  eq('提满 5 年后不再计提', monthlyDepreciationAt(388000, '2018-04-22', monthEnd('2026-10')), 0)
+  eq('当月还没买 → 不计提', monthlyDepreciationAt(158000, '2026-11-10', monthEnd('2026-10')), 0)
+  eq('刚好买到第 60 个月仍在提', monthlyDepreciationAt(360000, '2021-10-05', monthEnd('2026-09')) > 0, true)
+  eq('第 61 个月起停提', monthlyDepreciationAt(360000, '2021-10-05', monthEnd('2026-10')), 0)
+  eq('没填购置日期 → 0（不猜）', monthlyDepreciationAt(400000, '', monthEnd('2026-10')), 0)
+  eq('月折旧额本身与时间无关', monthlyDepreciation(360000), 5400)
+  // 月末边界：闰年 2 月
+  eq('月末 2026-02 = 28 号', monthEnd('2026-02').getDate(), 28)
+  eq('月末 2024-02 = 29 号（闰年）', monthEnd('2024-02').getDate(), 29)
+  eq('月末 2026-12 = 31 号', monthEnd('2026-12').getDate(), 31)
+}
+
+console.log('\n=== 成本：手工录入 ===')
+{
+  const T = TODAY
+  const base = { date: '2026-10-10', purpose: 'part', vehicleId: 'V1', amount: '1200', note: '' }
+  ok('配件挂车后通过', validateCost(base, { today: T }).ok)
+  ok('证件挂车后通过', validateCost({ ...base, purpose: 'doc' }, { today: T }).ok)
+  ok('「其他」不挂车也通过', validateCost({ ...base, purpose: 'other', vehicleId: '' }, { today: T }).ok)
+  ok('配件不挂车被拦', !!validateCost({ ...base, vehicleId: '' }, { today: T }).errors.vehicleId)
+  ok('证件不挂车被拦', !!validateCost({ ...base, purpose: 'doc', vehicleId: '' }, { today: T }).errors.vehicleId)
+  eq('配件不挂车的提示点名了用途', validateCost({ ...base, vehicleId: '' }, { today: T }).errors.vehicleId, '车辆配件必须选一台车')
+  ok('「其他」不挂车时不报车辆错', !validateCost({ ...base, purpose: 'other', vehicleId: '' }, { today: T }).errors.vehicleId)
+  ok('「其他」没备注只给软提示', (() => {
+    const r = validateCost({ ...base, purpose: 'other', note: '' }, { today: T })
+    return r.ok && !!r.warnings.note
+  })())
+  ok('「其他」写了备注就没有提示', !validateCost({ ...base, purpose: 'other', note: '仓库月租' }, { today: T }).warnings.note)
+
+  // 「其他」不能带着车辆 id 入库 —— 否则会被算进那台车
+  eq('「其他」的车辆 id 被清掉', toCostPayload({ ...base, purpose: 'other', note: 'x' }).vehicleId, '')
+  eq('配件的车辆 id 保留', toCostPayload(base).vehicleId, 'V1')
+  eq('金额保留两位', toCostPayload({ ...base, amount: '1234.567' }).amount, 1234.57)
+}
+
+console.log('\n=== 成本：按月汇总 ===')
+{
+  const vehicles = [
+    { id: 'V1', plate: '挂车A', type: '牵引车', price: 418000, buyDate: '2022-03-18' },
+    { id: 'V2', plate: '挂车B', type: '自卸车', price: 388000, buyDate: '2018-04-22' }, // 提满了
+    { id: 'V3', plate: '挂车C', type: '皮卡', price: 158000, buyDate: '2026-11-10' }, // 还没买
+  ]
+  const drivers = [
+    { id: 'D1', name: '甲', salary: 8800 },
+    { id: 'D2', name: '乙', salary: 7200 },
+    { id: 'D3', name: '丙', salary: 0 }, // 没填工资
+  ]
+  const trips = [
+    { id: 'T1', date: '2026-10-05', vehicleId: 'V1', actualFuel: 100, fuelPrice: 7.5, toll: 120, revenue: 3000 },
+    { id: 'T2', date: '2026-10-18', vehicleId: 'V1', actualFuel: 90, fuelPrice: 7.5, toll: 110, revenue: 2600 },
+    { id: 'T3', date: '2026-09-20', vehicleId: 'V2', actualFuel: 80, fuelPrice: 7.2, toll: 90, revenue: 2000 },
+  ]
+  const costs = [
+    { id: 'C1', date: '2026-10-08', purpose: 'part', vehicleId: 'V1', amount: 4200, note: '四条轮胎' },
+    { id: 'C2', date: '2026-10-11', purpose: 'doc', vehicleId: 'V1', amount: 1800, note: '年检' },
+    // 脏数据：其他用途却带着车辆 id，模型必须无视它
+    { id: 'C3', date: '2026-10-20', purpose: 'other', vehicleId: 'V1', amount: 3000, note: '仓库月租' },
+    { id: 'C4', date: '2026-09-30', purpose: 'part', vehicleId: 'V2', amount: 999, note: '上个月的' },
+  ]
+
+  const s = costSummary({ vehicles, drivers, trips, costs }, '2026-10')
+  eq('折旧只算当月该提的（V1）', s.depreciation, 6270)
+  eq('人工 = 工资合计', s.staff, 16000)
+  eq('油耗 = 当月趟次', s.fuel, 1425)
+  eq('过路费 = 当月趟次', s.toll, 230)
+  eq('手工 = 当月三类合计', s.manual, 9000)
+  eq('总成本 = 五项相加', s.total, 32925)
+  eq('按用途拆分', s.byPurpose, { part: 4200, doc: 1800, other: 3000 })
+  eq('只统计当月的趟次', s.tripCount, 2)
+  eq('只统计当月的手工记录', s.manualCount, 3)
+  eq('有数据时 empty 为 false', s.empty, false)
+
+  // 逐车归集
+  const v1 = s.vehicleRows.find((v) => v.id === 'V1')
+  const v2 = s.vehicleRows.find((v) => v.id === 'V2')
+  const v3 = s.vehicleRows.find((v) => v.id === 'V3')
+  eq('V1 折旧', v1.depreciation, 6270)
+  eq('V1 油耗', v1.fuel, 1425)
+  eq('V1 过路费', v1.toll, 230)
+  eq('V1 配件', v1.part, 4200)
+  eq('V1 证件', v1.doc, 1800)
+  eq('V1 手工合计只含配件+证件', v1.manual, 6000)
+  eq(
+    '「其他」没有被算进 V1（哪怕它带着 V1 的 id）',
+    v1.manual,
+    6000 // 若把 3000 也算进去会是 9000
+  )
+  eq('V1 合计', v1.total, 6270 + 1425 + 230 + 6000)
+  eq('提满 5 年的 V2 折旧为 0', v2.depreciation, 0)
+  eq('上个月的成本不计入 V2', v2.manual, 0)
+  eq('还没买的 V3 全为 0', v3.total, 0)
+  eq('按总额倒序', s.vehicleRows[0].id, 'V1')
+
+  // 空月份：没有趟次也没有手工记录，但折旧与人工照提（它们是按月计提的）
+  const empty = costSummary({ vehicles, drivers, trips, costs }, '2026-01')
+  eq('空月份仍然有折旧（V1 那时还在 5 年内）', empty.depreciation, 6270)
+  eq('空月份只有折旧 + 人工', empty.staff + empty.depreciation, 22270)
+  eq('空月份没有趟次', empty.tripCount, 0)
+  eq('空月份没有手工成本', empty.manualCount, 0)
+  eq('空月份总成本 = 折旧 + 人工', empty.total, 22270)
+  // 2027-04：V1（2022-03 买）与 V2 都已提满，只剩 2026-11 买的 V3 在提
+  const later = costSummary({ vehicles, drivers, trips, costs }, '2027-04')
+  eq('提满的车不再计提，只剩 V3', later.depreciation, monthlyDepreciation(158000))
+  eq('V3 的月折旧', later.depreciation, 2370)
+  eq('V1 与 V2 都不再计提', later.vehicleRows.filter((v) => v.depreciation > 0).map((v) => v.id), ['V3'])
+  // 完全空的车队
+  const none = costSummary({ vehicles: [], drivers: [], trips: [], costs: [] }, '2026-10')
+  eq('什么都没有时 total 为 0', none.total, 0)
+  eq('什么都没有时 empty 为 true', none.empty, true)
+  eq('容错：不传数据也不炸', costSummary({}, '2026-10').total, 0)
+
+  // 饼图数据
+  const bd = costBreakdown(s)
+  eq('饼图不含 0 值项', bd.every((x) => x.value > 0), true)
+  eq('饼图项数 = 有金额的来源数（折旧/人工/油耗/过路/配件/证件/其他）', bd.length, 7)
+  eq('饼图按金额倒序', bd[0].key, 'staff')
+  ok('占比之和为 1', Math.abs(bd.reduce((a, x) => a + x.pct, 0) - 1) < 1e-9)
+  eq('空数据时饼图为空数组', costBreakdown(costSummary({}, '2026-10')), [])
+
+  // 月份
+  eq('monthOf 取年月', monthOf('2026-10-05'), '2026-10')
+  eq('inMonth 判断', [inMonth('2026-10-05', '2026-10'), inMonth('2026-10-05', '2026-11')], [true, false])
+  const ms = availableMonths({ trips, costs }, new Date(2026, 9, 16))
+  ok('可选月份含当前月', ms.includes('2026-10'))
+  ok('可选月份含数据里的月份', ms.includes('2026-09'))
+  ok('可选月份倒序', ms.join('|') === [...ms].sort().reverse().join('|'))
+  ok('可选月份不重复', new Set(ms).size === ms.length)
+}
+
 console.log('\n=== 车辆必选（车型由车辆带出）===')
 {
   // 车型不再单独填：它绑在车辆上。所以「车辆」变成了必选。

@@ -12,6 +12,7 @@ export const TABS = [
   { path: '/routes', name: '路线管理', short: '路线', icon: 'route', desc: '路线与收费站' },
   { path: '/trips', name: '趟次管理', short: '趟次', icon: 'box', desc: '趟次与油耗' },
   { path: '/income', name: '收入', short: '收入', icon: 'wallet', desc: '运费结算' },
+  { path: '/costs', name: '成本', short: '成本', icon: 'cost', desc: '折旧 / 人工 / 油耗' },
 ]
 
 const read = () => {
