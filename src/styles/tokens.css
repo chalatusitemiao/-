@@ -1,0 +1,108 @@
+/* ============================================================
+   设计令牌 · 现代轻卡片风
+   浅灰底 + 纯白卡片 + 大圆角 + 柔和分层阴影 + 单一强调色
+   ============================================================ */
+
+:root {
+  /* —— 底色 —— */
+  --bg: #f4f5f7;
+  --bg-2: #eceef2;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-3: #f2f4f7;
+  --surface-hover: #f7f8fa;
+
+  /* —— 描边 —— */
+  --line: #eaecf0;
+  --line-2: #e2e5ea;
+  --line-strong: #cfd4dc;
+
+  /* —— 文字 —— */
+  --ink: #14171c;
+  --ink-2: #5b6472;
+  --ink-3: #8b93a1;
+  --ink-4: #b0b7c1;
+
+  /* —— 主色（强调色只有一个） —— */
+  --primary: #4f46e5;
+  --primary-2: #6366f1;
+  --primary-soft: #eef1ff;
+  --primary-soft-2: #e0e4ff;
+  --primary-ink: #3730a3;
+
+  /* —— 语义色 —— */
+  --green: #15a34a;
+  --green-soft: #e7f7ee;
+  --red: #dc2626;
+  --red-soft: #fdecea;
+  --amber: #c2740a;
+  --amber-vivid: #f59e0b;
+  --amber-soft: #fdf3e2;
+  --cyan: #0e8fa8;
+  --cyan-soft: #e5f6f9;
+  --violet: #7c3aed;
+  --violet-soft: #f2ecfe;
+
+  /* —— 成本科目配色（浅底上重新调过饱和度） —— */
+  --c-fuel: #f59e0b;
+  --c-toll: #06b6d4;
+  --c-driver: #6366f1;
+  --c-fixed: #8b5cf6;
+  --c-maint: #f43f5e;
+
+  /* —— 字体 —— */
+  /* 走系统原生字体：iOS/macOS 上是 SF Pro，Windows 上是 Segoe UI Variable，
+     中文落到苹方 / 鸿蒙 / 微软雅黑 —— 干净、不发虚，也不需要联网加载字体 */
+  --font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text',
+    'Segoe UI', 'HarmonyOS Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+    'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas,
+    monospace;
+
+  /* —— 圆角 —— */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-2xl: 26px;
+  --r-pill: 999px;
+
+  /* —— 阴影：分层、低透明度，浅色下的高级感靠它 —— */
+  --sh-1: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.05);
+  --sh-2: 0 4px 10px -2px rgba(16, 24, 40, 0.07), 0 2px 6px -2px rgba(16, 24, 40, 0.04);
+  --sh-3: 0 12px 28px -8px rgba(16, 24, 40, 0.14), 0 4px 10px -4px rgba(16, 24, 40, 0.06);
+  --sh-4: 0 24px 56px -16px rgba(16, 24, 40, 0.22), 0 8px 20px -8px rgba(16, 24, 40, 0.1);
+  --ring: 0 0 0 3px rgba(79, 70, 229, 0.16);
+
+  /* —— 动效 —— */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 400ms;
+
+  /* —— 布局 —— */
+  --rail-w: 232px;
+  --topbar-h: 54px;
+  --tabbar-h: 56px;
+  --pad: 16px;
+  --maxw: 1280px;
+
+  /* —— 安全区（刘海屏 / 手势条） —— */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+@media (min-width: 900px) {
+  :root {
+    --pad: 24px;
+  }
+}
+@media (min-width: 1280px) {
+  :root {
+    --pad: 32px;
+  }
+}

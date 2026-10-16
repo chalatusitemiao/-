@@ -1,0 +1,22 @@
+{
+  "name": "fleet-ops-console",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "调度指挥台 — 纯前端车队管理 / 成本报表演示 (Vue 3 + Vite，无后端、零 UI 库依赖)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "node scripts/check-sheet.mjs",
+    "check:ssr": "vite build --ssr scripts/ssr-entry.js --outDir dist-ssr --logLevel warn && node dist-ssr/ssr-entry.js",
+    "fixtures": "python scripts/make-fixtures.py"
+  },
+  "dependencies": {
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "vite": "^8.3.4"
+  }
+}
