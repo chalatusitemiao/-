@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 油耗考核：按「每吨每百公里耗油量」对比
+ * 趟次管理：趟次明细 + 按「每吨每百公里耗油量」对比
  * ------------------------------------------------------------
  * 指标：实际油耗 ÷ (载重 × 公里数 ÷ 100)，单位 L / 吨·百公里。
  * 它把载重归一化掉了，所以同一条路线、同一类型车辆的司机可以直接横向比 ——
@@ -106,28 +106,10 @@ const summaryCards = computed(() => {
     { l: '总里程', v: num(o.distance), u: 'km', s: o.avgTonnage ? `平均载重 ${o.avgTonnage} 吨` : '—' },
     { l: '实际油耗', v: num(o.actual, 0), u: 'L', s: o.per100km ? `折合 ${o.per100km} L/100km（未按载重归一）` : '—' },
     {
-      l: '每吨百公里耗油',
-      v: o.perTon100 === null ? '—' : String(o.perTon100),
-      u: o.perTon100 === null ? '' : 'L',
-      s: o.perTon100 === null ? '还没有可对比的趟次' : `Σ油耗 ÷ Σ吨·百公里（${num(o.actual, 0)} ÷ ${num(o.tonHundred, 0)}）`,
-      tone: 'brand',
-    },
-    {
       l: '油费合计',
       v: m.fuelCost ? '¥' + num(m.fuelCost, 0) : '—',
       u: '',
       s: m.fuelCost ? `+ 过路费 ¥${num(m.toll, 0)} = 成本 ¥${num(m.cost, 0)}` : '还没填油费单价',
-    },
-    {
-      l: '待结算运费',
-      v: m.unsettled ? '¥' + num(m.unsettled, 0) : m.unsettledCount ? '¥0' : '—',
-      u: '',
-      s: m.unsettledCount
-        ? `${m.unsettledCount} 趟未收 · 已结 ¥${num(m.settled, 0)}`
-        : o.count
-          ? '全部已结算'
-          : '还没有趟次',
-      tone: m.unsettledCount ? 'warn' : '',
     },
   ]
 })
@@ -295,9 +277,9 @@ const range = (r) =>
     <!-- 标题 -->
     <div class="page-head">
       <div>
-        <h1 class="page-head__ttl">油耗考核</h1>
+        <h1 class="page-head__ttl">趟次管理</h1>
         <div class="page-head__desc">
-          共 {{ overall.count }} 条趟次 · 指标：每吨每百公里耗油量（L / 吨·百公里）· 载重已归一化，可直接横向比
+          共 {{ overall.count }} 条趟次 · 油耗对比用的指标：每吨每百公里耗油量（L / 吨·百公里）· 载重已归一化
         </div>
       </div>
       <div class="head-actions">

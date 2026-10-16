@@ -5,10 +5,11 @@ import Icon from './components/Icon.vue'
 import Vehicles from './views/Vehicles.vue'
 import Drivers from './views/Drivers.vue'
 import Routes from './views/Routes.vue'
-import Fuel from './views/Fuel.vue'
+import Trips from './views/Trips.vue'
+import Income from './views/Income.vue'
 
 /* 模块 → 页面。加模块时这里补一行 */
-const VIEWS = { '/': Vehicles, '/drivers': Drivers, '/routes': Routes, '/fuel': Fuel }
+const VIEWS = { '/': Vehicles, '/drivers': Drivers, '/routes': Routes, '/trips': Trips, '/income': Income }
 const view = computed(() => VIEWS[route.value] || Vehicles)
 
 const todayStr = computed(() => {

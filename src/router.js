@@ -10,7 +10,8 @@ export const TABS = [
   { path: '/', name: '车辆管理', short: '车辆', icon: 'truck', desc: '车辆档案' },
   { path: '/drivers', name: '司机管理', short: '司机', icon: 'driver', desc: '司机档案' },
   { path: '/routes', name: '路线管理', short: '路线', icon: 'route', desc: '路线与收费站' },
-  { path: '/fuel', name: '油耗考核', short: '油耗', icon: 'fuel', desc: '趟次与节油排行' },
+  { path: '/trips', name: '趟次管理', short: '趟次', icon: 'box', desc: '趟次与油耗' },
+  { path: '/income', name: '收入', short: '收入', icon: 'wallet', desc: '运费结算' },
 ]
 
 const read = () => {

@@ -169,6 +169,29 @@ export function removeTripsByVehicle(vehicleId) {
   return n - trips.length
 }
 
+/** 只改结算状态 —— 在「收入」页一键标记，不用打开整张趟次表单 */
+export function setTripSettled(id, settled) {
+  const t = trips.find((x) => x.id === id)
+  if (!t) return false
+  t.settled = settled === true
+  commit()
+  return true
+}
+
+/** 批量标记结算（收入页勾选一批一起结） */
+export function setSettledBulk(ids, settled) {
+  let n = 0
+  for (const id of ids) {
+    const t = trips.find((x) => x.id === id)
+    if (t && t.settled !== (settled === true)) {
+      t.settled = settled === true
+      n++
+    }
+  }
+  if (n) commit()
+  return n
+}
+
 /* ---------------- 批量导入 ---------------- */
 export function importTrips(drafts) {
   const fresh = []

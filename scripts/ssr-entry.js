@@ -42,6 +42,7 @@ import {
 } from '../src/store/routes.js'
 import {
   trips, tripMap, addTrip, updateTrip, removeTrip, clearAll as clearTrips, findTrip, removeTripsByRoute,
+  setTripSettled, setSettledBulk,
 } from '../src/store/trips.js'
 import {
   fuelRate, aggregateTrips, isSuspicious,
@@ -438,7 +439,7 @@ console.log('\n=== 校验规则 ===')
 }
 
 console.log('\n=== 司机模块 · 菜单 ===')
-eq('TABS 有四项', TABS.map((t) => t.name), ['车辆管理', '司机管理', '路线管理', '油耗考核'])
+eq('TABS 有五项', TABS.map((t) => t.name), ['车辆管理', '司机管理', '路线管理', '趟次管理', '收入'])
 eq('司机入口路径', TABS[1].path, '/drivers')
 {
   clearDrivers()
@@ -688,7 +689,7 @@ console.log('\n=== 路线模块 ===')
   const rp = await mount(App, undefined, '路线页 · 空库', 2500)
   if (rp) {
     ok('菜单里有「路线管理」', rp.includes('路线管理'))
-    ok('四个菜单项都在', ['车辆管理', '司机管理', '路线管理', '油耗考核'].every((n) => rp.includes(n)))
+    ok('五个菜单项都在', ['车辆管理', '司机管理', '路线管理', '趟次管理', '收入'].every((n) => rp.includes(n)))
     ok('空库时给出引导文案', rp.includes('还没有路线数据'))
     ok('空库时提供「录入路线」', rp.includes('录入路线'))
     notContains('路线页没有「载入演示数据」', rp, '载入演示数据')
@@ -805,7 +806,7 @@ console.log('\n=== 车型随车辆带出 / 路线表单的车型下拉取自车�
   const rf3 = await mount(RouteForm, { open: true, route: null }, '路线表单 · 车队为空', 400)
   ok('车队为空时提示先按常用车型列出', rf3.includes('车辆管理里还没有车辆'))
 }
-console.log('\n=== 油耗考核 · 核心：按吨归一化后再比 ===')
+console.log('\n=== 趟次管理 · 核心：按吨归一化后再比 ===')
 {
   clearDrivers()
   clearRoutes()
@@ -835,9 +836,9 @@ console.log('\n=== 油耗考核 · 核心：按吨归一化后再比 ===')
   eq('甲的三趟指标一致，波动为 0', [ofA.perTon100Min, ofA.perTon100Max], [1.08, 1.08])
 
   // 界面上：甲必须排在乙前面
-  current.value = '/fuel'
-  location.hash = '#/fuel'
-  const fp = await mount(App, undefined, '油耗考核页 · 有趟次', 5000)
+  current.value = '/trips'
+  location.hash = '#/trips'
+  const fp = await mount(App, undefined, '趟次管理页 · 有趟次', 5000)
   if (fp) {
     ok('按路线分组', fp.includes('苏州') && fp.includes('上海'))
     ok('按车型分组', fp.includes('牵引车'))
@@ -847,23 +848,81 @@ console.log('\n=== 油耗考核 · 核心：按吨归一化后再比 ===')
     ok('甲排在乙前面（按吨归一化后胜出，而不是看绝对油耗）', iA >= 0 && iB >= 0 && iA < iB, `甲@${iA} 乙@${iB}`)
     ok('显示每吨每百公里耗油量', fp.includes('每吨每百公里耗油量') && fp.includes('L / 吨·百公里'))
     ok('显示波动范围', fp.includes('范围') && fp.includes('波动'))
-    ok('汇总卡给出整体指标', fp.includes('吨·百公里'))
+    // 改动：汇总卡只留 趟次 / 总里程 / 实际油耗 / 油费合计 四张
+    const cardCount = (fp.match(/vsum__l/g) || []).length
+    eq('汇总卡只留四张', cardCount, 4)
+    ok('四张分别是趟次 / 总里程 / 实际油耗 / 油费合计', ['>趟次<', '>总里程<', '>实际油耗<', '>油费合计<'].every((s) => fp.includes(s)))
+    // 这三张卡按需求从汇总条里去掉了（吨·百公里在司机行里仍作为分母保留）
+    notContains('去掉了每吨百公里耗油卡', fp, 'vsum__l">每吨百公里耗油')
+    notContains('去掉了吨·百公里卡', fp, 'vsum__l">吨·百公里')
+    notContains('待结算运费挪到收入页了', fp, 'vsum__l">待结算运费')
     notContains('已经去掉标准油耗', fp, '标准油耗')
     notContains('已经去掉节油率', fp, '节油率')
     notContains('已经去掉奖金', fp, '奖金')
-    notContains('油耗考核页没有油价输入框', fp, '油价')
+    notContains('趟次管理页没有油价输入框', fp, '油价')
     ok('搜索框还在', fp.includes('搜索路线 / 车型 / 车牌 / 司机'))
     ok('两个视图切换还在', fp.includes('油耗对比') && fp.includes('趟次明细'))
     ok('可按车型或按车辆分组', fp.includes('按车型分组') && fp.includes('按车辆分组'))
     // 需求：油费单价与结算状态
     ok('汇总卡有油费合计', fp.includes('油费合计'))
-    ok('汇总卡有待结算运费', fp.includes('待结算运费'))
   }
   clearTrips()
   clearRoutes()
   clearDrivers()
 }
 
+console.log('\n=== 收入 · 运费结算 ===')
+{
+  clearDrivers()
+  clearRoutes()
+  clearTrips()
+  current.value = '/income'
+  location.hash = '#/income'
+  const empty = await mount(App, undefined, '收入页 · 空库', 2500)
+  if (empty) {
+    ok('菜单里有「收入」', empty.includes('收入'))
+    ok('空库时给出引导', empty.includes('还没有运费记录'))
+    ok('有结算筛选胶囊', empty.includes('待结算') && empty.includes('已结算'))
+  }
+
+  clearAll()
+  const d = addDriver({ name: '收入测试', phone: '13900001111', hireDate: '2023-01-01', licenseNo: '' })
+  const v1 = addVehicle({ plate: '苏E·INC01', type: '牵引车', tonnage: 32, price: 400000, buyDate: '2022-01-01', odo: 100 })
+  const r = addRoute({ from: '南京', to: '上海', distance: 300, tolls: [{ station: '南京', prices: { 牵引车: 100 } }] })
+  const mk = (date, revenue) =>
+    addTrip({ date, routeId: r.id, vehicleId: v1.id, type: '牵引车', driverId: d.id, tonnage: 30, actualFuel: 95, fuelPrice: 7.5, toll: 100, distance: 300, revenue })
+  mk('2026-10-01', 3000)
+  mk('2026-10-05', 2000)
+  const t3 = mk('2026-09-20', 1500)
+  eq('一共 3 趟', trips.length, 3)
+  eq('新增默认待结算', findTrip(t3.id).settled, false)
+
+  // 收入页的一键标记
+  setTripSettled(t3.id, true)
+  eq('标记结算生效', findTrip(t3.id).settled, true)
+  eq('重复标记不会重复计数', setSettledBulk([t3.id], true), 0)
+  eq('批量撤销返回改动条数', setSettledBulk([t3.id], false), 1)
+  setTripSettled(t3.id, true)
+  eq('撤销后回到待结算', setSettledBulk([t3.id], false) === 1 && findTrip(t3.id).settled === false, true)
+  setTripSettled(t3.id, true)
+
+  const inc = await mount(App, undefined, '收入页 · 有数据', 3000)
+  if (inc) {
+    for (const k of ['待结算运费', '已结算运费', '运费合计', '结算进度']) ok(`有「${k}」卡`, inc.includes(k))
+    ok('待结算金额 = 3000 + 2000', inc.includes('5,000'))
+    ok('已结算金额 = 1500', inc.includes('1,500'))
+    ok('有按月份分区', inc.includes('按月份看'))
+    ok('月份里出现 2026-10 与 2026-09', inc.includes('2026-10') && inc.includes('2026-09'))
+    ok('有「标记已结算」按钮', inc.includes('标记已结算'))
+    ok('有运费明细表', inc.includes('运费明细'))
+    ok('说明了成本要填单价才算得准', inc.includes('油费单价'))
+    notContains('收入页不显示油耗指标', inc, '每吨百公里')
+  }
+  clearTrips()
+  clearRoutes()
+  clearAll()
+  clearDrivers()
+}
 console.log('\n=== 趟次表单 / CRUD ===')
 {
   const tf = await mount(TripForm, { open: true, trip: null }, '趟次表单 · 新增')
