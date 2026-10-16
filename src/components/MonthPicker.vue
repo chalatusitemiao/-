@@ -10,9 +10,10 @@
  *
  * monthsWithData 用来在翻月时提示「这个月没有数据」，避免用户以为页面坏了。
  */
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import Icon from './Icon.vue'
 import { openDatePicker } from '../utils/datePicker.js'
+import { currentMonth, clampMonth, isFutureMonth } from '../utils/date.js'
 
 const props = defineProps({
   /** 'YYYY-MM'，或 allowAll 时的 'all' */
@@ -26,8 +27,23 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const isAll = computed(() => props.modelValue === 'all')
-const today = new Date()
-const thisMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+const thisMonth = currentMonth()
+
+/**
+ * 封顶到当月。
+ * 未来的月份不该能选到 —— 折旧不会提前计提、趟次和成本也不许填未来日期，
+ * 所以那些月份永远是空的；能选过去只会让人以为「数据丢了」。
+ */
+const atMax = computed(() => !isAll.value && String(props.modelValue) >= thisMonth)
+
+// 不管这个值从哪来（hash、旧状态），只要落在未来就拉回当月
+watch(
+  () => props.modelValue,
+  (v) => {
+    if (isFutureMonth(v)) emit('update:modelValue', thisMonth)
+  },
+  { immediate: true }
+)
 
 const label = computed(() => {
   if (isAll.value) return '全部月份'
@@ -41,14 +57,16 @@ const hasData = computed(() => new Set(props.monthsWithData))
 const currentHasData = computed(() => !isAll.value && hasData.value.has(props.modelValue))
 
 function shift(delta) {
+  // next 到当月为止，不许再往后
+  if (delta > 0 && atMax.value) return
   const [y, m] = String(props.modelValue || thisMonth).split('-').map(Number)
   if (!y || !m) return
   const d = new Date(y, m - 1 + delta, 1)
-  emit('update:modelValue', `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+  emit('update:modelValue', clampMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`))
 }
 function setMonth(v) {
   if (!v) return
-  emit('update:modelValue', String(v).slice(0, 7))
+  emit('update:modelValue', clampMonth(String(v).slice(0, 7)))
 }
 function goThisMonth() {
   emit('update:modelValue', thisMonth)
@@ -71,13 +89,22 @@ function pickAll() {
         class="mp__input"
         type="month"
         :value="isAll ? '' : modelValue"
+        :max="thisMonth"
         aria-label="选择月份"
         @click="openDatePicker"
         @change="setMonth($event.target.value)"
       />
     </label>
 
-    <button v-if="!isAll" class="mp__nav" aria-label="下一个月" @click="shift(1)">
+    <button
+      v-if="!isAll"
+      class="mp__nav"
+      :disabled="atMax"
+      :aria-disabled="atMax || undefined"
+      :title="atMax ? '已经是最新的月份了' : '下一个月'"
+      :aria-label="atMax ? '已到当月，不能再看未来' : '下一个月'"
+      @click="shift(1)"
+    >
       <Icon name="chevR" :size="15" :sw="2.2" />
     </button>
 
@@ -111,6 +138,15 @@ function pickAll() {
 .mp__nav:hover {
   border-color: var(--line-strong);
   background: var(--surface-hover);
+}
+/* 到当月就不能再往后：变灰 + 禁用指针，鼠标悬停不再是按钮那种反馈 */
+.mp__nav:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.mp__nav:disabled:hover {
+  border-color: var(--line-2);
+  background: var(--surface);
 }
 /* 输入框铺满整块：点哪儿都能弹出原生月份选择器 */
 .mp__field {

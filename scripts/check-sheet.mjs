@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { readSheet, parseCsv } from '../src/utils/sheet.js'
 import { matchColumns, buildDrafts, summarizeDrafts, coerceRow, templateCsv } from '../src/utils/vehicleImport.js'
 import { FIELDS, normalizePlate, validateVehicle, parseNumber, normalizeCarType, PLATE_RE } from '../src/utils/vehicleRules.js'
-import { parseDate, toISODate, excelSerialToDate, monthsBetween } from '../src/utils/date.js'
+import { parseDate, toISODate, excelSerialToDate, monthsBetween, currentMonth, isFutureMonth, clampMonth } from '../src/utils/date.js'
 import { monthlyDepreciationAt, monthEnd } from '../src/utils/depreciation.js'
 import { validateCost, toCostPayload } from '../src/utils/costRules.js'
 import { costSummary, costBreakdown, availableMonths, monthOf, inMonth } from '../src/utils/costModel.js'
@@ -561,6 +561,35 @@ console.log('\n=== 每个日期输入框都挂了弹出处理（回归）===')
   ok('项目里确实有日期输入框', count >= 4, `${count} 个`)
   eq('每个日期输入框都挂了 @click="openDatePicker"', missing, [])
 }
+console.log('\n=== 月份不能选到未来（回归）===')
+{
+  // 未来的月份没有意义：折旧不会提前计提，趟次与成本也不允许填未来日期，
+  // 所以那个月永远是空的。能选过去只会让人以为「数据丢了」。
+  const T = new Date(2026, 9, 16) // 2026-10-16
+  eq('currentMonth 取年月', currentMonth(T), '2026-10')
+  eq('currentMonth 补零', currentMonth(new Date(2026, 0, 5)), '2026-01')
+
+  eq('上个月不是未来', isFutureMonth('2026-09', T), false)
+  eq('当月不是未来', isFutureMonth('2026-10', T), false)
+  eq('下个月是未来', isFutureMonth('2026-11', T), true)
+  eq('明年是未来', isFutureMonth('2027-01', T), true)
+  eq('跨年也判得对', isFutureMonth('2027-01', new Date(2026, 11, 31)), true)
+  eq('「全部」不算未来', isFutureMonth('all', T), false)
+  eq('空值不算未来', isFutureMonth('', T), false)
+
+  eq('未来月被钳到当月', clampMonth('2026-11', T), '2026-10')
+  eq('很远的未来也被钳到当月', clampMonth('2099-01', T), '2026-10')
+  eq('当月保持不变', clampMonth('2026-10', T), '2026-10')
+  eq('过去的月份不动', clampMonth('2025-03', T), '2025-03')
+  eq('「全部」原样返回', clampMonth('all', T), 'all')
+  eq('空值原样返回', clampMonth('', T), '')
+
+  // 前后翻月都不该越过当月
+  const back = clampMonth('2026-08', T)
+  eq('往前翻没问题', back, '2026-08')
+  eq('从当月再往后翻会被拦住', clampMonth('2026-11', T) === '2026-10', true)
+}
+
 console.log('\n=== scoped 类名不许撞全局类名（回归）===')
 {
   // 踩过的坑：Costs.vue 的工具条用了 .bar，而 app.css 里有一组**全局**的 .bar

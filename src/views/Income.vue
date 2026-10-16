@@ -18,6 +18,7 @@ import { findVehicle } from '../store/vehicles.js'
 import { tripCost } from '../utils/tripRules.js'
 import { monthOf } from '../utils/costModel.js'
 import { query, setQuery } from '../router.js'
+import { clampMonth } from '../utils/date.js'
 import { num, yuan } from '../utils/format.js'
 
 /** 默认只看待结算 —— 这个页面的意义就是盯没收到的钱 */
@@ -27,10 +28,11 @@ const filter = ref('unsettled') // unsettled | settled | all
  * 收账时最关心的是「一共还差多少没收」，所以默认给全量；
  * 想按月对账时再挑具体月份。
  */
-const month = ref(query('month') || 'all')
+const month = ref(clampMonth(query('month') || 'all'))
 function setMonth(v) {
-  month.value = v
-  setQuery('month', v)
+  const m = clampMonth(v)
+  month.value = m
+  setQuery('month', m)
 }
 const q = ref('')
 const pendingDelete = ref(null)

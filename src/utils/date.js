@@ -12,6 +12,25 @@ const PAD = (n) => String(n).padStart(2, '0')
 /** Date → 'YYYY-MM-DD' */
 export const toISO = (d) => (d ? `${d.getFullYear()}-${PAD(d.getMonth() + 1)}-${PAD(d.getDate())}` : '')
 
+/* ---------- 月份（成本 / 收入按月看的时候用） ---------- */
+
+/** 当前月份 'YYYY-MM' */
+export const currentMonth = (today = new Date()) => `${today.getFullYear()}-${PAD(today.getMonth() + 1)}`
+
+/** 是不是未来的月份（字符串比较对 'YYYY-MM' 是成立的） */
+export const isFutureMonth = (m, today = new Date()) => !!m && m !== 'all' && String(m) > currentMonth(today)
+
+/**
+ * 把月份钳到「不超过当月」。
+ * 未来的月份没有意义 —— 折旧不会提前计提，趟次与成本也不允许填未来的日期，
+ * 所以那个月份永远是空的；允许选到它只会让人以为「数据丢了」。
+ */
+export function clampMonth(m, today = new Date()) {
+  if (!m || m === 'all') return m
+  const now = currentMonth(today)
+  return String(m) > now ? now : String(m)
+}
+
 /* Excel 序列号以 1899-12-30 为原点，
    这样正好抵消 Excel 把 1900 当成闰年的历史 bug */
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30)

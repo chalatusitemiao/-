@@ -928,6 +928,21 @@ console.log('\n=== 收入 · 运费结算 ===')
     ok('收入页有月份选择器', inc.includes('mp__input') && inc.includes('type="month"'))
     ok('收入页可以选「全部」', inc.includes('全部'))
     ok('说明了点月份行可以跳转', inc.includes('点一行跳到那个月'))
+    // 收入页同样不能选到未来；选「全部」时前后翻月整条隐藏（没有「哪个月」可言）
+    ok('收入页月份也封顶到当月', inc.includes(`max="${toISO(new Date()).slice(0, 7)}"`))
+    notContains('选「全部」时不显示翻月箭头', inc, '已到当月，不能再看未来')
+    notContains('选「全部」时也没有 prev 箭头', inc, '上一个月')
+
+    // 收入页选具体月份时，同样封顶到当月
+    current.value = '/income'
+    location.hash = '#/income?month=2026-03'
+    const incPast = await mount(App, undefined, '收入页 · 选过去月份', 3000)
+    if (incPast) {
+      ok('收入页过去月份 next 可用', incPast.includes('下一个月'))
+      ok('收入页过去月份 next 未禁用', !incPast.includes('已到当月，不能再看未来'))
+    }
+    current.value = '/income'
+    location.hash = '#/income'
 
     // 按月份筛选确实生效（月份也走 hash，可深链接）
     current.value = '/income'
@@ -1019,8 +1034,16 @@ console.log('\n=== 成本模块 ===')
     ok('说明里点出没填单价会让油耗成本偏低', page.includes('没填单价的趟次算不出油费'))
     // 月份自由选择
     ok('有月份选择器', page.includes('mp__input') && page.includes('type="month"'))
-    ok('月份选择器支持前后翻月', page.includes('上一个月') && page.includes('下一个月'))
+    // 当月时 next 的 aria-label 会改成禁用提示，所以按钮数量按 class 数，别按文案数
+    const navCount = (page.match(/class="mp__nav/g) || []).length
+    eq('月份选择器有前后两个翻月按钮', navCount, 2)
+    ok('prev 箭头正常', page.includes('上一个月'))
     ok('有「本月」快捷按钮', page.includes('本月'))
+    // 不能选到未来：原生 month 输入框封顶到当月，next 箭头在当月时禁用
+    const curM = toISO(new Date()).slice(0, 7)
+    ok('月份输入框封顶到当月', page.includes(`max="${curM}"`), `期望 max="${curM}"`)
+    ok('当月时 next 箭头被禁用', page.includes('已到当月，不能再看未来'))
+    ok('禁用态说明了原因', page.includes('已经是最新的月份了') || page.includes('已经是最新的月份'))
     ok('总览/按车辆两个页签都在', page.includes('总览') && page.includes('按车辆'))
     ok('总览默认显示饼图', page.includes('成本构成') && page.includes('donut__arc'))
     ok('总览里有「看全部」入口', page.includes('看全部'))
@@ -1049,6 +1072,19 @@ console.log('\n=== 成本模块 ===')
   }
   location.hash = '#/costs'
   current.value = '/costs'
+
+  // 选一个过去的月份：next 箭头应当可用（只有到当月才禁用）
+  current.value = '/costs'
+  location.hash = '#/costs?month=2026-03'
+  const past = await mount(App, undefined, '成本页 · 选过去月份', 3000)
+  if (past) {
+    ok('过去月份不再是「已到当月」', !past.includes('已到当月，不能再看未来'))
+    ok('过去月份 next 箭头可用', past.includes('下一个月'))
+    ok('过去月份仍然受当月封顶', past.includes(`max="${toISO(new Date()).slice(0, 7)}"`))
+    ok('空月份给出提示', past.includes('这个月没有成本'))
+  }
+  current.value = '/costs'
+  location.hash = '#/costs'
 
   // 表单：用途决定要不要选车
   const cf1 = await mount(CostForm, { open: true, cost: null }, '成本表单 · 新增', 500)

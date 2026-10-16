@@ -29,14 +29,16 @@ import { costs, addCost, updateCost, removeCost } from '../store/costs.js'
 import { costSummary, costBreakdown, availableMonths, monthOf } from '../utils/costModel.js'
 import { COST_COLORS, purposeName } from '../data/costs.js'
 import { query, setQuery } from '../router.js'
+import { clampMonth } from '../utils/date.js'
 import { num } from '../utils/format.js'
 
 /* ---------------- 月份（也写进 hash，可深链接） ---------------- */
 const months = computed(() => availableMonths({ trips, costs }))
-const month = ref(query('month') || months.value[0])
+const month = ref(clampMonth(query('month') || months.value[0]))
 function setMonth(v) {
-  month.value = v
-  setQuery('month', v)
+  const m = clampMonth(v)
+  month.value = m
+  setQuery('month', m)
 }
 
 /* ---------------- 视图（写进 hash，可深链接） ---------------- */
@@ -61,12 +63,10 @@ const pct = (part, whole) => (whole ? ((part / whole) * 100).toFixed(0) + '%' : 
 /** 总额单独做成一条 hero —— 它是这页的结论，跟四个分项不是一个层级 */
 const totalCard = computed(() => {
   const s = summary.value
-  return {
-    v: s.total ? '¥' + num(s.total, 0) : '—',
-    s: s.total
-      ? `${month.value} · ${s.tripCount} 趟 · 平均每趟 ¥${num(s.total / Math.max(1, s.tripCount), 0)}`
-      : `${month.value} · 这个月还没有成本`,
-  }
+  if (!s.total) return { v: '—', s: `${month.value} · 这个月还没有成本` }
+  // 没有趟次时不能写「平均每趟」—— 折旧和人工是按月计提的，跟跑了几趟无关
+  const per = s.tripCount ? ` · 平均每趟 ¥${num(s.total / s.tripCount, 0)}` : ' · 这个月没有趟次（只有按月计提的折旧与人工）'
+  return { v: '¥' + num(s.total, 0), s: `${month.value} · ${s.tripCount} 趟${per}` }
 })
 
 /** 四个分项 —— 正好铺满 grid--kpi 在桌面端的 4 列，不会留一张孤零零的卡 */
