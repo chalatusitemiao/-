@@ -855,6 +855,9 @@ console.log('\n=== 油耗考核 · 核心：按吨归一化后再比 ===')
     ok('搜索框还在', fp.includes('搜索路线 / 车型 / 车牌 / 司机'))
     ok('两个视图切换还在', fp.includes('油耗对比') && fp.includes('趟次明细'))
     ok('可按车型或按车辆分组', fp.includes('按车型分组') && fp.includes('按车辆分组'))
+    // 需求：油费单价与结算状态
+    ok('汇总卡有油费合计', fp.includes('油费合计'))
+    ok('汇总卡有待结算运费', fp.includes('待结算运费'))
   }
   clearTrips()
   clearRoutes()
@@ -865,7 +868,7 @@ console.log('\n=== 趟次表单 / CRUD ===')
 {
   const tf = await mount(TripForm, { open: true, trip: null }, '趟次表单 · 新增')
   if (tf) {
-    for (const t of ['运输日期', '路线', '司机', '车辆', '实际载重', '实际油耗', '过路费', '运费收入']) {
+    for (const t of ['运输日期', '路线', '司机', '车辆', '实际载重', '实际油耗', '油费单价', '过路费', '运费收入', '结算状态']) {
       ok(`表单字段「${t}」存在`, tf.includes(t))
     }
     // 改动：车型从车辆带出，所以车辆变成必选，车型下拉也没了
@@ -875,6 +878,12 @@ console.log('\n=== 趟次表单 / CRUD ===')
     notContains('车型不再是可选项列表', tf, '>请选择车型<')
     ok('过路费说明按路线+车型带出', tf.includes('按路线 + 车型自动带出'))
     ok('提交按钮是「保存趟次」', tf.includes('保存趟次'))
+    // 需求：油费单价（油价一直在变，所以按趟记）+ 结算状态勾选
+    ok('油费单价标了元/L', tf.includes('元/L'))
+    ok('说明按加油时的实际油价填', tf.includes('按加油时的实际油价填'))
+    ok('结算是勾选控件', tf.includes('role="checkbox"'))
+    ok('默认是待结算', tf.includes('待结算'))
+    notContains('新增时默认不是已结算', tf, '>已结算<')
   }
 
   clearDrivers()

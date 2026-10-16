@@ -38,7 +38,7 @@ import {
   routeKey, routeOf, routeName, routeTollTotal, tollPrice, tollRange,
   validateRoute, validateToll, toRoutePayload, normPlace,
 } from '../src/utils/routeRules.js'
-import { validateTrip, toTripPayload, tripKeyFields } from '../src/utils/tripRules.js'
+import { validateTrip, toTripPayload, tripKeyFields, tripCost, TRIP_FIELDS } from '../src/utils/tripRules.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const FIX = path.join(HERE, 'fixtures')
@@ -618,6 +618,9 @@ console.log('\n=== 校验规则清单（防止某条规则被静默删掉）==='
       ['油耗须为正', P({ actualFuel: '0' }).actualFuel],
       ['油耗超限', P({ actualFuel: '9999' }).actualFuel],
       ['过路费非数字', P({ toll: 'x' }).toll],
+      ['油费单价非数字', P({ fuelPrice: 'x' }).fuelPrice],
+      ['油费单价为负', P({ fuelPrice: '-1' }).fuelPrice],
+      ['油费单价超上限', P({ fuelPrice: '999' }).fuelPrice],
       ['运费不能为负', P({ revenue: '-1' }).revenue],
     ],
     路线: [
@@ -638,6 +641,40 @@ console.log('\n=== 校验规则清单（防止某条规则被静默删掉）==='
   }
 }
 
+console.log('\n=== 油费单价与结算状态 ===')
+{
+  const base = {
+    date: '2026-10-01', routeId: 'R01', vehicleId: 'V01', driverId: 'D01',
+    tonnage: '30', actualFuel: '35', distance: '132',
+  }
+  // 油费单价：选填，但填了要是合理数字
+  ok('油费单价选填（不填也通过）', validateTrip(base, { today: TODAY }).ok)
+  ok('油费单价非数字被拦', !!validateTrip({ ...base, fuelPrice: 'x' }, { today: TODAY }).errors.fuelPrice)
+  ok('油费单价为负被拦', !!validateTrip({ ...base, fuelPrice: '-1' }, { today: TODAY }).errors.fuelPrice)
+  ok('油费单价超 200 元/L 被拦', !!validateTrip({ ...base, fuelPrice: '999' }, { today: TODAY }).errors.fuelPrice)
+  ok('正常油价通过', validateTrip({ ...base, fuelPrice: '7.62' }, { today: TODAY }).ok)
+
+  // 单趟算账
+  eq('油费 = 油耗 × 单价', tripCost({ actualFuel: 35, fuelPrice: 7.5 }).fuelCost, 262.5)
+  eq('没填单价时油费算 0（不拿默认油价硬凑）', tripCost({ actualFuel: 35 }).fuelCost, 0)
+  eq(
+    'hasPrice 区分「没填」和「填了 0」',
+    [tripCost({ fuelPrice: 7.5 }).hasPrice, tripCost({}).hasPrice, tripCost({ fuelPrice: 0 }).hasPrice],
+    [true, false, false]
+  )
+  eq('成本 = 油费 + 过路费', tripCost({ actualFuel: 35, fuelPrice: 7.5, toll: 85 }).cost, 347.5)
+  eq('毛利 = 运费 − 成本', tripCost({ actualFuel: 35, fuelPrice: 7.5, toll: 85, revenue: 3000 }).profit, 2652.5)
+  eq('跑亏了毛利为负', tripCost({ actualFuel: 35, fuelPrice: 7.5, toll: 85, revenue: 100 }).profit, -247.5)
+  eq('什么都没填时全为 0', tripCost({}), { fuelCost: 0, toll: 0, cost: 0, revenue: 0, profit: 0, hasPrice: false })
+
+  // 结算状态
+  eq('不勾选就是待结算', toTripPayload(base).settled, false)
+  eq('勾选后是已结算', toTripPayload({ ...base, settled: true }).settled, true)
+  eq('只有 true 才算已结算（其它值都当待结算）', toTripPayload({ ...base, settled: 1 }).settled, false)
+  eq('payload 带出油费单价', toTripPayload({ ...base, fuelPrice: '7.5' }).fuelPrice, 7.5)
+  ok('油费单价在字段定义里', TRIP_FIELDS.some((f) => f.key === 'fuelPrice'))
+  ok('结算状态是勾选类型', TRIP_FIELDS.some((f) => f.key === 'settled' && f.type === 'checkbox'))
+}
 console.log('\n=== 车辆必选（车型由车辆带出）===')
 {
   // 车型不再单独填：它绑在车辆上。所以「车辆」变成了必选。

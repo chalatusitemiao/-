@@ -21,11 +21,14 @@ import { findRoute } from '../store/routes.js'
 import { findDriver } from '../store/drivers.js'
 import { findVehicle } from '../store/vehicles.js'
 import { aggregateTrips, fuelPerTon100km, fuelPer100km, isSuspicious } from '../utils/fuelModel.js'
+import { tripCost } from '../utils/tripRules.js'
 import { num, yuan } from '../utils/format.js'
 
 const view = ref('rank') // rank | detail
 /** 中间那层按什么分组：车型（比不同司机）或车辆（比同一台车） */
 const groupBy = ref('type')
+/** 结算筛选：all | unsettled | settled */
+const settleFilter = ref('all')
 const q = ref('')
 const formOpen = ref(false)
 const editing = ref(null)
@@ -44,27 +47,87 @@ const usable = computed(() =>
   trips.filter((t) => Number(t.actualFuel) > 0 && Number(t.distance) > 0 && Number(t.tonnage) > 0)
 )
 
-/* ---------------- 汇总 ---------------- */
+/* ---------------- 钱：油费 / 成本 / 结算 ---------------- */
+/**
+ * 全部趟次的钱。刻意按**全部**趟次算（不像油耗指标那样过滤空载/缺数据）——
+ * 运费和过路费跟拉了多少货没关系，不该被排除掉。
+ */
+const money = computed(() => {
+  let fuelCost = 0
+  let toll = 0
+  let revenue = 0
+  let unsettled = 0
+  let settled = 0
+  let unsettledCount = 0
+  let settledCount = 0
+  let noPrice = 0
+  for (const t of trips) {
+    const c = tripCost(t)
+    fuelCost += c.fuelCost
+    toll += c.toll
+    revenue += c.revenue
+    if (!c.hasPrice) noPrice++
+    if (t.settled) {
+      settled += c.revenue
+      settledCount++
+    } else {
+      unsettled += c.revenue
+      if (c.revenue > 0) unsettledCount++
+    }
+  }
+  const cost = Math.round((fuelCost + toll) * 100) / 100
+  return {
+    fuelCost: Math.round(fuelCost * 100) / 100,
+    toll: Math.round(toll * 100) / 100,
+    cost,
+    revenue: Math.round(revenue * 100) / 100,
+    profit: Math.round((revenue - cost) * 100) / 100,
+    unsettled: Math.round(unsettled * 100) / 100,
+    settled: Math.round(settled * 100) / 100,
+    unsettledCount,
+    settledCount,
+    noPrice,
+  }
+})
+
+/** 汇总 */
 const overall = computed(() => ({ ...aggregateTrips(trips), count: trips.length }))
 
 const summaryCards = computed(() => {
   const o = overall.value
+  const m = money.value
   return [
     {
       l: '趟次',
       v: String(o.count),
       u: '趟',
-      s: o.skipped ? `${o.count - o.skipped} 趟参与对比 · ${o.skipped} 趟空载或缺数据` : '全部参与对比',
+      s: o.skipped ? `${o.count - o.skipped} 趟参与油耗对比 · ${o.skipped} 趟空载/缺数据` : '全部参与油耗对比',
     },
     { l: '总里程', v: num(o.distance), u: 'km', s: o.avgTonnage ? `平均载重 ${o.avgTonnage} 吨` : '—' },
     { l: '实际油耗', v: num(o.actual, 0), u: 'L', s: o.per100km ? `折合 ${o.per100km} L/100km（未按载重归一）` : '—' },
-    { l: '吨·百公里', v: num(o.tonHundred, 0), u: 't·100km', s: 'Σ(载重 × 公里数 ÷ 100)' },
     {
       l: '每吨百公里耗油',
       v: o.perTon100 === null ? '—' : String(o.perTon100),
       u: o.perTon100 === null ? '' : 'L',
-      s: o.perTon100 === null ? '还没有可对比的趟次' : '越低越省',
+      s: o.perTon100 === null ? '还没有可对比的趟次' : `Σ油耗 ÷ Σ吨·百公里（${num(o.actual, 0)} ÷ ${num(o.tonHundred, 0)}）`,
       tone: 'brand',
+    },
+    {
+      l: '油费合计',
+      v: m.fuelCost ? '¥' + num(m.fuelCost, 0) : '—',
+      u: '',
+      s: m.fuelCost ? `+ 过路费 ¥${num(m.toll, 0)} = 成本 ¥${num(m.cost, 0)}` : '还没填油费单价',
+    },
+    {
+      l: '待结算运费',
+      v: m.unsettled ? '¥' + num(m.unsettled, 0) : m.unsettledCount ? '¥0' : '—',
+      u: '',
+      s: m.unsettledCount
+        ? `${m.unsettledCount} 趟未收 · 已结 ¥${num(m.settled, 0)}`
+        : o.count
+          ? '全部已结算'
+          : '还没有趟次',
+      tone: m.unsettledCount ? 'warn' : '',
     },
   ]
 })
@@ -160,11 +223,14 @@ const detailRows = computed(() => {
         vehicle: findVehicle(t.vehicleId),
         perTon100: fuelPerTon100km(t.tonnage, t.distance, t.actualFuel),
         per100km: fuelPer100km(t.distance, t.actualFuel),
+        cost: tripCost(t),
         suspicious: isSuspicious(t),
       }
     })
     .filter((x) => {
       if (!x.route) return false
+      if (settleFilter.value === 'unsettled' && x.t.settled) return false
+      if (settleFilter.value === 'settled' && !x.t.settled) return false
       if (!kw) return true
       return (
         `${x.route.from}${x.route.to}`.toLowerCase().includes(kw) ||
@@ -269,6 +335,15 @@ const range = (r) =>
             v-model="groupBy"
             :options="[{ key: 'type', name: '按车型分组' }, { key: 'vehicle', name: '按车辆分组' }]"
           />
+          <Chips
+            v-else
+            v-model="settleFilter"
+            :options="[
+              { key: 'all', name: '全部' },
+              { key: 'unsettled', name: '待结算', count: money.unsettledCount },
+              { key: 'settled', name: '已结算', count: money.settledCount },
+            ]"
+          />
         </div>
       </div>
     </div>
@@ -360,20 +435,20 @@ const range = (r) =>
 
         <template v-if="detailRows.length">
           <div class="tbl-wrap vonly-desktop">
-            <table class="tbl" style="min-width: 1080px">
+            <table class="tbl" style="min-width: 1220px">
               <thead>
                 <tr>
                   <th>日期</th>
                   <th style="text-align: left">路线</th>
-                  <th style="text-align: left">车型</th>
-                  <th style="text-align: left">车辆</th>
+                  <th style="text-align: left">车辆 / 车型</th>
                   <th style="text-align: left">司机</th>
-                  <th>载重</th>
-                  <th>公里</th>
+                  <th>载重 / 公里</th>
                   <th>实际油耗</th>
-                  <th>吨·百公里</th>
                   <th class="is-auto">每吨百公里</th>
-                  <th>过路费</th>
+                  <th>油费</th>
+                  <th>过路费 / 成本</th>
+                  <th>运费 / 毛利</th>
+                  <th>结算</th>
                   <th style="width: 150px">操作</th>
                 </tr>
               </thead>
@@ -381,20 +456,44 @@ const range = (r) =>
                 <tr v-for="x in detailRows" :key="x.t.id">
                   <td class="num">{{ x.t.date }}</td>
                   <td style="text-align: left">{{ routeText(x.route) }}</td>
-                  <td style="text-align: left"><span class="vtype">{{ x.t.type }}</span></td>
-                  <td style="text-align: left" class="num">{{ x.vehicle?.plate || '—' }}</td>
+                  <td style="text-align: left">
+                    <div class="num strong">{{ x.vehicle?.plate || '—' }}</div>
+                    <div class="tbl__sub">{{ x.t.type || '—' }}</div>
+                  </td>
                   <td style="text-align: left">{{ x.driver?.name || '—' }}</td>
-                  <td class="num">{{ x.t.tonnage }} t</td>
-                  <td class="num">{{ num(x.t.distance) }}</td>
+                  <td class="num">
+                    {{ x.t.tonnage }} t
+                    <div class="tbl__sub">{{ num(x.t.distance) }} km</div>
+                  </td>
                   <td class="num strong">
                     {{ num(x.t.actualFuel, 1) }} L
                     <div class="tbl__sub">{{ x.per100km }} L/100km</div>
                   </td>
-                  <td class="num">{{ num((x.t.tonnage * x.t.distance) / 100, 1) }}</td>
                   <td class="num strong metric">{{ metric(x.perTon100) }}</td>
                   <td class="num">
-                    ¥{{ num(x.t.toll) }}
-                    <div v-if="x.t.revenue" class="tbl__sub">运费 ¥{{ num(x.t.revenue) }}</div>
+                    <template v-if="x.cost.hasPrice">
+                      ¥{{ num(x.cost.fuelCost, 0) }}
+                      <div class="tbl__sub">单价 ¥{{ x.t.fuelPrice }}/L</div>
+                    </template>
+                    <template v-else>
+                      —
+                      <div class="tbl__sub">未填单价</div>
+                    </template>
+                  </td>
+                  <td class="num">
+                    ¥{{ num(x.cost.toll, 0) }}
+                    <div class="tbl__sub">成本 ¥{{ num(x.cost.cost, 0) }}</div>
+                  </td>
+                  <td class="num">
+                    ¥{{ num(x.cost.revenue, 0) }}
+                    <div v-if="x.cost.revenue" class="tbl__sub" :class="x.cost.profit >= 0 ? 'is-good' : 'is-bad'">
+                      毛利 ¥{{ num(x.cost.profit, 0) }}
+                    </div>
+                  </td>
+                  <td>
+                    <span class="pill" :class="x.t.settled ? 'pill--run' : 'pill--warn'">
+                      <i class="pill__dot" />{{ x.t.settled ? '已结算' : '待结算' }}
+                    </span>
                   </td>
                   <td>
                     <div class="rowacts">
@@ -412,14 +511,30 @@ const range = (r) =>
               <div class="vcard__hd">
                 <span class="rname">{{ routeText(x.route) }}</span>
                 <span class="vtype">{{ x.t.type }}</span>
+                <span class="pill" :class="x.t.settled ? 'pill--run' : 'pill--warn'">
+                  <i class="pill__dot" />{{ x.t.settled ? '已结算' : '待结算' }}
+                </span>
               </div>
               <dl class="vcard__kv">
                 <div><dt>日期</dt><dd>{{ x.t.date }}</dd></div>
                 <div><dt>司机 / 车辆</dt><dd>{{ x.driver?.name || '—' }} · {{ x.vehicle?.plate || '—' }}</dd></div>
                 <div><dt>载重 / 公里</dt><dd>{{ x.t.tonnage }} t · {{ num(x.t.distance) }} km</dd></div>
                 <div><dt>实际油耗</dt><dd>{{ num(x.t.actualFuel, 1) }} L（{{ x.per100km }} L/100km）</dd></div>
-                <div><dt>过路费</dt><dd>¥{{ num(x.t.toll) }}</dd></div>
                 <div><dt>每吨百公里</dt><dd class="metric">{{ metric(x.perTon100) }} L</dd></div>
+                <div>
+                  <dt>油费</dt>
+                  <dd>
+                    <template v-if="x.cost.hasPrice">¥{{ num(x.cost.fuelCost, 2) }}<span class="vsub">¥{{ x.t.fuelPrice }}/L</span></template>
+                    <template v-else>—<span class="vsub">未填单价</span></template>
+                  </dd>
+                </div>
+                <div><dt>过路费 / 成本</dt><dd>¥{{ num(x.cost.toll, 0) }} / ¥{{ num(x.cost.cost, 0) }}</dd></div>
+                <div>
+                  <dt>运费 / 毛利</dt>
+                  <dd :class="x.cost.revenue && x.cost.profit < 0 ? 'is-bad' : ''">
+                    ¥{{ num(x.cost.revenue, 0) }}<span v-if="x.cost.revenue" class="vsub">毛利 ¥{{ num(x.cost.profit, 0) }}</span>
+                  </dd>
+                </div>
               </dl>
               <div v-if="x.perTon100 === null" class="vrate">空载趟次，算不出每吨耗油</div>
               <div v-else-if="x.suspicious" class="vrate vrate--warn">油耗低于物理下限，建议核对</div>
@@ -504,6 +619,9 @@ const range = (r) =>
 }
 .vsum__v.is-brand {
   color: var(--primary);
+}
+.vsum__v.is-warn {
+  color: var(--amber);
 }
 .vsum__v.is-placeholder {
   color: var(--ink-4);
@@ -775,6 +893,15 @@ const range = (r) =>
 }
 .vcard__kv dd.metric {
   color: var(--primary);
+}
+.vcard__kv dd.is-bad {
+  color: var(--red);
+}
+.vsub {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
 }
 .vrate {
   margin-top: 10px;

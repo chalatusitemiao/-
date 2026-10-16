@@ -14,8 +14,9 @@ import Icon from './Icon.vue'
 import { CAR_TYPES } from '../data/vehicles.js'
 import { routes, tollTotalFor } from '../store/routes.js'
 import { vehicles } from '../store/vehicles.js'
+import { lastFuelPrice } from '../store/trips.js'
 import { drivers } from '../store/drivers.js'
-import { validateTrip, toTripPayload } from '../utils/tripRules.js'
+import { validateTrip, toTripPayload, tripCost } from '../utils/tripRules.js'
 import { fuelPer100km, fuelPerTon100km, tonHundredKm, isSuspicious, isEstimatedType } from '../utils/fuelModel.js'
 import { toISO } from '../utils/date.js'
 import { openDatePicker } from '../utils/datePicker.js'
@@ -32,7 +33,8 @@ const today = new Date()
 
 const form = reactive({
   date: '', routeId: '', type: '', driverId: '', vehicleId: '',
-  tonnage: '', actualFuel: '', toll: '', revenue: '', note: '', distance: '',
+  tonnage: '', actualFuel: '', fuelPrice: '', toll: '', revenue: '', note: '', distance: '',
+  settled: false,
 })
 const errors = reactive({})
 const warnings = reactive({})
@@ -50,8 +52,12 @@ function reset() {
   form.vehicleId = t ? t.vehicleId : ''
   form.tonnage = t ? String(t.tonnage ?? '') : ''
   form.actualFuel = t ? String(t.actualFuel ?? '') : ''
+  // 新增时带出上次用过的油价：油价变得慢，每次重敲很烦
+  form.fuelPrice = t ? String(t.fuelPrice ?? '') : String(lastFuelPrice() || '')
   form.toll = t ? String(t.toll ?? '') : ''
   form.revenue = t ? String(t.revenue ?? '') : ''
+  // 新增默认「待结算」：运费很多不会当场结，默认已结会把账算错
+  form.settled = t ? t.settled === true : false
   form.note = t ? t.note || '' : ''
   form.distance = t ? String(t.distance ?? '') : ''
   tollAuto.value = !t
@@ -111,6 +117,9 @@ const check = computed(() => {
   }
 })
 
+/* ---------------- 单趟算账 ---------------- */
+/** 油费 = 实际油耗 × 油费单价；毛利 = 运费 − 油费 − 过路费 */
+const cost = computed(() => tripCost(form))
 /* ---------------- 校验 / 提交 ---------------- */
 function run() {
   const { errors: e, warnings: w } = validateTrip(form, { today })
@@ -254,7 +263,18 @@ const routeLabel = (r) => `${r.from} → ${r.to}（${num(r.distance)} km）`
       </div>
     </div>
 
+    <!-- 油费单价：按趟记，因为油价一直在变 -->
     <div class="field-grid mt10">
+      <div class="field" :class="{ 'is-error': errors.fuelPrice }">
+        <label class="field__lb">油费单价</label>
+        <span class="input-affix">
+          <input v-model="form.fuelPrice" class="input input--num" type="number" inputmode="decimal" step="0.01" placeholder="0.00" @blur="onBlur" @input="onInput('fuelPrice')" />
+          <span class="input-affix__u">元/L</span>
+        </span>
+        <div v-if="errors.fuelPrice" class="field__err"><Icon name="alert" :size="12" :sw="2.2" />{{ errors.fuelPrice }}</div>
+        <div v-else-if="cost.hasPrice" class="hint">这一趟油费 ¥{{ num(cost.fuelCost, 2) }}</div>
+        <div v-else class="hint">按加油时的实际油价填；新增时带出上次用过的价</div>
+      </div>
       <div class="field" :class="{ 'is-error': errors.toll }">
         <label class="field__lb">过路费</label>
         <span class="input-affix">
@@ -264,6 +284,9 @@ const routeLabel = (r) => `${r.from} → ${r.to}（${num(r.distance)} km）`
         <div v-if="errors.toll" class="field__err"><Icon name="alert" :size="12" :sw="2.2" />{{ errors.toll }}</div>
         <div v-else class="hint">按路线 + 车型自动带出，可改</div>
       </div>
+    </div>
+
+    <div class="field-grid">
       <div class="field" :class="{ 'is-error': errors.revenue }">
         <label class="field__lb">运费收入</label>
         <span class="input-affix">
@@ -272,6 +295,46 @@ const routeLabel = (r) => `${r.from} → ${r.to}（${num(r.distance)} km）`
         </span>
         <div v-if="errors.revenue" class="field__err"><Icon name="alert" :size="12" :sw="2.2" />{{ errors.revenue }}</div>
         <div v-else class="hint">用于统计司机当月创收</div>
+      </div>
+      <!-- 结算状态：勾选 = 运费已收到 -->
+      <div class="field">
+        <label class="field__lb">结算状态</label>
+        <button
+          class="checkline"
+          :class="{ 'is-on': form.settled }"
+          type="button"
+          role="checkbox"
+          :aria-checked="form.settled"
+          @click="form.settled = !form.settled"
+        >
+          <span class="checkline__box"><Icon v-if="form.settled" name="check" :size="12" :sw="3" /></span>
+          <span class="checkline__t">{{ form.settled ? '已结算' : '待结算' }}</span>
+        </button>
+        <div class="hint">{{ form.settled ? '运费已收到' : '运费还没收到 —— 默认就是待结算' }}</div>
+      </div>
+    </div>
+
+    <!-- 单趟算账：只在填了钱的时候显示 -->
+    <div v-if="cost.hasPrice || cost.toll || cost.revenue" class="money">
+      <div class="money__row">
+        <span>油费</span>
+        <b>{{ cost.hasPrice ? '¥' + num(cost.fuelCost, 2) : '—' }}</b>
+      </div>
+      <div class="money__row">
+        <span>过路费</span>
+        <b>¥{{ num(cost.toll, 2) }}</b>
+      </div>
+      <div class="money__row">
+        <span>单趟成本</span>
+        <b>¥{{ num(cost.cost, 2) }}</b>
+      </div>
+      <div class="money__row">
+        <span>运费收入</span>
+        <b>¥{{ num(cost.revenue, 2) }}</b>
+      </div>
+      <div class="money__res" :class="cost.profit >= 0 ? 'is-good' : 'is-bad'">
+        <span>{{ cost.profit >= 0 ? '单趟毛利' : '单趟亏损' }}</span>
+        <b>¥{{ num(Math.abs(cost.profit), 2) }}</b>
       </div>
     </div>
 
@@ -354,5 +417,89 @@ const routeLabel = (r) => `${r.from} → ${r.to}（${num(r.distance)} km）`
   gap: 5px;
   font-size: 11.5px;
   color: var(--amber);
+}
+/* —— 结算勾选 —— */
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 12px;
+  min-height: 44px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+.checkline:hover {
+  border-color: var(--line-strong);
+}
+.checkline.is-on {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+.checkline__box {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface);
+  color: #fff;
+}
+.checkline.is-on .checkline__box {
+  border-color: var(--green);
+  background: var(--green);
+}
+.checkline__t {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* —— 单趟算账 —— */
+.money {
+  margin-top: 4px;
+  padding: 12px 13px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface-3);
+}
+.money__row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.money__row + .money__row {
+  margin-top: 5px;
+}
+.money__row b {
+  margin-left: auto;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.money__res {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line-2);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.money__res b {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.money__res.is-good {
+  color: var(--green);
+}
+.money__res.is-bad {
+  color: var(--red);
 }
 </style>

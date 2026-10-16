@@ -86,6 +86,18 @@ export const tripsOfVehicle = (vehicleId) => trips.filter((t) => t.vehicleId ===
 /** 某月的趟次（'YYYY-MM'） */
 export const tripsOfMonth = (month) => trips.filter((t) => String(t.date).slice(0, 7) === month)
 
+/** 最近一次用过的油价 —— 新增趟次时带出来当默认，省得每次重敲 */
+export function lastFuelPrice() {
+  for (const t of trips) {
+    const p = Number(t.fuelPrice)
+    if (p > 0) return p
+  }
+  return 0
+}
+
+/** 有没有还没结算的运费（列表里提示用） */
+export const hasUnsettled = () => trips.some((t) => !t.settled && Number(t.revenue) > 0)
+
 /* ---------------- 组装记录 ---------------- */
 function buildRecord(form, base = {}) {
   const vehicleId = String(form.vehicleId || '').trim()
@@ -103,8 +115,11 @@ function buildRecord(form, base = {}) {
     driverId: String(form.driverId || '').trim(),
     tonnage: Number(parseNumber(form.tonnage)) || 0,
     actualFuel: Number(parseNumber(form.actualFuel)) || 0,
+    fuelPrice: Number(parseNumber(form.fuelPrice)) || 0,
     toll: Number(parseNumber(form.toll)) || 0,
     revenue: Number(parseNumber(form.revenue)) || 0,
+    // 勾选 = 运费已收到；默认待结算（运费很多不会当场结）
+    settled: form.settled === true,
     note: String(form.note || '').trim(),
     manual: true,
   }

@@ -20,8 +20,13 @@ export const TRIP_FIELDS = [
   { key: 'vehicleId', label: '车辆', required: true, type: 'ref', hint: '车型由车辆带出' },
   { key: 'tonnage', label: '实际载重', required: true, type: 'number', unit: '吨' },
   { key: 'actualFuel', label: '实际油耗', required: true, type: 'number', unit: 'L', hint: '这一趟实际加了多少油' },
+  {
+    key: 'fuelPrice', label: '油费单价', required: false, type: 'number', unit: '元/L',
+    hint: '按这一趟加油时的实际油价填 —— 油价一直在变，所以按趟记',
+  },
   { key: 'toll', label: '过路费', required: false, type: 'number', unit: '元', hint: '留空按路线的收费站价格自动带出' },
   { key: 'revenue', label: '运费收入', required: false, type: 'number', unit: '元', hint: '用于统计司机当月创收' },
+  { key: 'settled', label: '已结算', required: false, type: 'checkbox', hint: '运费是否已经收到；不勾就是待结算' },
   { key: 'note', label: '备注', required: false, type: 'text' },
 ]
 export const TRIP_FIELD_MAP = Object.fromEntries(TRIP_FIELDS.map((f) => [f.key, f]))
@@ -82,16 +87,38 @@ export function validateTrip(form, ctx = {}) {
     warnings.actualFuel = `折合 ${((fuel / km) * 100).toFixed(1)} L/100km，低于该车型的物理下限，请核对里程与加油量`
   }
 
-  // 过路费 / 运费
-  for (const [k, label] of [['toll', '过路费'], ['revenue', '运费收入']]) {
+  // 过路费 / 运费 / 油费单价
+  for (const [k, label] of [['toll', '过路费'], ['revenue', '运费收入'], ['fuelPrice', '油费单价']]) {
     const raw = String(form[k] ?? '').trim()
     if (raw === '') continue
     const n = Number(raw)
     if (Number.isNaN(n)) errors[k] = `${label}必须是数字`
     else if (n < 0) errors[k] = `${label}不能为负`
+    else if (k === 'fuelPrice' && n > 200) errors[k] = '油费单价超过 200 元/L，请确认是否填错'
   }
 
   return { errors, warnings, ok: Object.keys(errors).length === 0 }
+}
+
+/**
+ * 单趟的钱：油费 = 实际油耗 × 油费单价；毛利 = 运费 − 油费 − 过路费。
+ * 油费单价没填时油费算 0（不是拿某个默认油价硬凑）。
+ */
+export function tripCost(t) {
+  const fuel = Number(t.actualFuel) || 0
+  const price = Number(t.fuelPrice) || 0
+  const fuelCost = Math.round(fuel * price * 100) / 100
+  const toll = Number(t.toll) || 0
+  const revenue = Number(t.revenue) || 0
+  const cost = Math.round((fuelCost + toll) * 100) / 100
+  return {
+    fuelCost,
+    toll,
+    cost,
+    revenue,
+    profit: Math.round((revenue - cost) * 100) / 100,
+    hasPrice: price > 0,
+  }
 }
 
 export function toTripPayload(form) {
@@ -104,8 +131,11 @@ export function toTripPayload(form) {
     vehicleId: String(form.vehicleId || ''),
     tonnage: Number(parseNumber(form.tonnage)) || 0,
     actualFuel: Number(parseNumber(form.actualFuel)) || 0,
+    fuelPrice: Number(parseNumber(form.fuelPrice)) || 0,
     toll: Number(parseNumber(form.toll)) || 0,
     revenue: Number(parseNumber(form.revenue)) || 0,
+    // 勾选 = 运费已收到；默认待结算
+    settled: form.settled === true,
     note: String(form.note || '').trim(),
   }
 }
