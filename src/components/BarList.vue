@@ -5,6 +5,11 @@
  * 用来看「哪台车最费钱」。条宽按占最大值的比例算 ——
  * 用最大值而不是总和当基准，小项之间的差异才看得出来。
  * 支持分段堆叠（比如一根条里同时看折旧 / 油耗 / 手工）。
+ *
+ * ⚠ 类名统一用 bl / bls 前缀。
+ *   app.css 里有一组**全局**的 .bar / .bar__fill（归档的仪表盘在用，是个 6px 高的进度条），
+ *   裸用 .bar 会被它套上 height:6px + overflow:hidden，整条榜会被压成一条线、
+ *   文字全部叠在一起。components 里的 scoped 样式挡不住全局规则。
  */
 import { computed } from 'vue'
 
@@ -35,20 +40,20 @@ const max = computed(() => Math.max(1, ...shown.value.map((x) => Number(x.value)
 </script>
 
 <template>
-  <ul class="bars">
-    <li v-for="(it, i) in shown" :key="it.key" class="bar" :style="{ '--d': Math.min(i, 12) * 40 + 'ms' }">
-      <div class="bar__hd">
-        <span class="bar__l" :class="{ 'is-rest': it.rest }">{{ it.label }}</span>
-        <span v-if="it.sub" class="bar__sub">{{ it.sub }}</span>
-        <span class="bar__v">{{ format(it.value) }}</span>
+  <ul class="bls">
+    <li v-for="(it, i) in shown" :key="it.key" class="bl" :style="{ '--d': Math.min(i, 12) * 40 + 'ms' }">
+      <div class="bl__hd">
+        <span class="bl__l" :class="{ 'is-rest': it.rest }">{{ it.label }}</span>
+        <span v-if="it.sub" class="bl__sub">{{ it.sub }}</span>
+        <span class="bl__v">{{ format(it.value) }}</span>
       </div>
-      <div class="bar__track">
+      <div class="bl__track">
         <!-- 分段堆叠：一段一个成本来源 -->
         <template v-if="it.segments && it.segments.length">
           <span
             v-for="s in it.segments"
             :key="s.key"
-            class="bar__seg"
+            class="bl__seg"
             :style="{
               width: ((Number(s.value) || 0) / max) * 100 + '%',
               background: s.color,
@@ -58,34 +63,34 @@ const max = computed(() => Math.max(1, ...shown.value.map((x) => Number(x.value)
         </template>
         <span
           v-else
-          class="bar__fill"
+          class="bl__fill"
           :style="{ width: ((Number(it.value) || 0) / max) * 100 + '%' }"
         />
       </div>
     </li>
-    <li v-if="!shown.length" class="bars__empty">还没有可比较的数据</li>
+    <li v-if="!shown.length" class="bls__empty">还没有可比较的数据</li>
   </ul>
 </template>
 
 <style scoped>
-.bars {
+.bls {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
 }
-.bar {
+.bl {
   min-width: 0;
-  animation: bar-in 0.42s var(--ease) both;
+  animation: bl-in 0.42s var(--ease) both;
   animation-delay: var(--d, 0ms);
 }
-@keyframes bar-in {
+@keyframes bl-in {
   from {
     opacity: 0;
     transform: translateY(4px);
   }
 }
-.bar__hd {
+.bl__hd {
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -93,50 +98,50 @@ const max = computed(() => Math.max(1, ...shown.value.map((x) => Number(x.value)
   min-width: 0;
   font-size: 12.5px;
 }
-.bar__l {
+.bl__l {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
-.bar__l.is-rest {
+.bl__l.is-rest {
   color: var(--ink-3);
   font-weight: 500;
 }
-.bar__sub {
+.bl__sub {
   color: var(--ink-3);
   font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bar__v {
+.bl__v {
   margin-left: auto;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
 }
-.bar__track {
+.bl__track {
   display: flex;
   height: 9px;
   border-radius: var(--r-pill);
   background: var(--surface-3);
   overflow: hidden;
 }
-.bar__seg,
-.bar__fill {
+.bl__seg,
+.bl__fill {
   height: 100%;
   transition: width 0.5s var(--ease);
 }
-.bar__seg + .bar__seg {
+.bl__seg + .bl__seg {
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.55);
 }
-.bar__fill {
+.bl__fill {
   background: linear-gradient(90deg, var(--primary), var(--primary-2, var(--primary)));
   border-radius: var(--r-pill);
 }
-.bars__empty {
+.bls__empty {
   font-size: 12.5px;
   color: var(--ink-3);
   padding: 6px 0;

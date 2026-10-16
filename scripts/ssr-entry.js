@@ -997,12 +997,19 @@ console.log('\n=== 成本模块 ===')
 
   const page = await mount(App, undefined, '成本页 · 有数据', 3200)
   if (page) {
-    for (const k of ['本月总成本', '车辆折旧', '员工成本', '油耗成本', '手工成本']) ok(`有「${k}」卡`, page.includes(k))
+    // 改动：总额单独一条 hero，下面正好 4 张分项卡铺满 grid--kpi（不留孤零零的第 5 张）
+    const kpiCount = (page.match(/class="vsum reveal"/g) || []).length
+    eq('分项卡正好 4 张', kpiCount, 4)
+    ok('总额是单独的 hero', page.includes('hero__v') && page.includes('本月总成本'))
+    ok('四张卡分别是折旧 / 人工 / 油耗 / 手工', ['车辆折旧', '员工成本', '油耗成本', '手工成本'].every((k) => page.includes(k)))
+    for (const k of ['车辆折旧', '员工成本', '油耗成本', '手工成本']) ok(`有「${k}」卡`, page.includes(k))
     ok('有成本构成饼图', page.includes('成本构成') && page.includes('donut__arc'))
     ok('饼图画的是 SVG 圆环', page.includes('<circle') && page.includes('stroke-dasharray'))
     ok('饼图图例带占比', page.includes('donut__legend') && page.includes('%'))
-    ok('有按车辆的成本榜', page.includes('按车辆') && page.includes('bars'))
-    ok('按车辆的条是分段堆叠的', page.includes('bar__seg'))
+    // 类名用 bl / bls 前缀：app.css 里有全局的 .bar，裸用会被压成 6px 高
+    ok('有按车辆的成本榜', page.includes('成本最高的车') && page.includes('bls'))
+    ok('按车辆的条是分段堆叠的', page.includes('bl__seg'))
+    notContains('没有再裸用全局的 .bar 类名', page, 'class="bar"')
     ok('有手工成本明细', page.includes('手工录入的成本'))
     ok('明细里有三笔', page.includes('四条轮胎') && page.includes('年检') && page.includes('仓库月租'))
     ok('用途标签区分颜色', page.includes('ptag--part') && page.includes('ptag--doc') && page.includes('ptag--other'))

@@ -58,15 +58,21 @@ const breakdown = computed(() => costBreakdown(summary.value))
 
 const pct = (part, whole) => (whole ? ((part / whole) * 100).toFixed(0) + '%' : '—')
 
+/** 总额单独做成一条 hero —— 它是这页的结论，跟四个分项不是一个层级 */
+const totalCard = computed(() => {
+  const s = summary.value
+  return {
+    v: s.total ? '¥' + num(s.total, 0) : '—',
+    s: s.total
+      ? `${month.value} · ${s.tripCount} 趟 · 平均每趟 ¥${num(s.total / Math.max(1, s.tripCount), 0)}`
+      : `${month.value} · 这个月还没有成本`,
+  }
+})
+
+/** 四个分项 —— 正好铺满 grid--kpi 在桌面端的 4 列，不会留一张孤零零的卡 */
 const cards = computed(() => {
   const s = summary.value
   return [
-    {
-      l: '本月总成本',
-      v: s.total ? '¥' + num(s.total, 0) : '—',
-      s: s.total ? `${s.tripCount} 趟 · 平均每趟 ¥${num(s.total / Math.max(1, s.tripCount), 0)}` : '这个月还没有成本',
-      tone: 'brand',
-    },
     {
       l: '车辆折旧',
       v: s.depreciation ? '¥' + num(s.depreciation, 0) : '—',
@@ -255,9 +261,9 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
 
     <template v-else>
       <!-- 月份 + 视图 -->
-      <div class="bar">
+      <div class="costbar">
         <MonthPicker :model-value="month" :months-with-data="months" noun="成本" @update:model-value="setMonth" />
-        <div class="bar__sp" />
+        <div class="costbar__sp" />
         <Chips
           :model-value="view"
           @update:model-value="setView"
@@ -270,10 +276,17 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
 
       <!-- ============ 总览 ============ -->
       <template v-if="view === 'overview'">
+        <!-- 本月总成本：单独一条 hero，跟下面四个分项拉开层级 -->
+        <div class="hero reveal">
+          <div class="hero__l">本月总成本</div>
+          <div class="hero__v" :class="{ 'is-placeholder': totalCard.v === '—' }">{{ totalCard.v }}</div>
+          <div class="hero__s">{{ totalCard.s }}</div>
+        </div>
+
         <div class="grid grid--kpi">
-          <div v-for="(c, i) in cards" :key="c.l" class="vsum reveal" :style="{ '--d': i * 45 + 'ms' }">
+          <div v-for="(c, i) in cards" :key="c.l" class="vsum reveal" :style="{ '--d': (i + 1) * 45 + 'ms' }">
             <div class="vsum__l">{{ c.l }}</div>
-            <div class="vsum__v" :class="[c.tone ? 'is-' + c.tone : '', { 'is-placeholder': c.v === '—' }]">{{ c.v }}</div>
+            <div class="vsum__v" :class="{ 'is-placeholder': c.v === '—' }">{{ c.v }}</div>
             <div class="vsum__s">{{ c.s }}</div>
           </div>
         </div>
@@ -558,15 +571,17 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   gap: 12px;
   flex-wrap: wrap;
 }
-/* 月份 + 视图切换 */
-.bar {
+/* 月份 + 视图切换
+   ⚠ 别用 .bar 当类名：app.css 里有一组**全局**的 .bar（归档仪表盘用的 6px 进度条），
+   scoped 样式挡不住它，会把这条工具条压成 height:6px + overflow:hidden。 */
+.costbar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
   min-width: 0;
 }
-.bar__sp {
+.costbar__sp {
   flex: 1 1 auto;
 }
 
@@ -577,6 +592,40 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--sh-1);
+}
+
+/* 总额 hero */
+.hero {
+  min-width: 0;
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(120% 180% at 0% 0%, var(--primary-soft) 0%, transparent 62%),
+    var(--surface);
+  box-shadow: var(--sh-1);
+}
+.hero__l {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.hero__v {
+  margin-top: 6px;
+  font-size: clamp(28px, 7.6vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.hero__v.is-placeholder {
+  color: var(--ink-4);
+}
+.hero__s {
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--ink-3);
 }
 .vsum__l {
   font-size: 12px;

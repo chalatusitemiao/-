@@ -561,6 +561,40 @@ console.log('\n=== 每个日期输入框都挂了弹出处理（回归）===')
   ok('项目里确实有日期输入框', count >= 4, `${count} 个`)
   eq('每个日期输入框都挂了 @click="openDatePicker"', missing, [])
 }
+console.log('\n=== scoped 类名不许撞全局类名（回归）===')
+{
+  // 踩过的坑：Costs.vue 的工具条用了 .bar，而 app.css 里有一组**全局**的 .bar
+  // （归档的仪表盘在用，是个 6px 高的进度条）。Vue 的 scoped 样式挡不住全局规则，
+  // 于是整条工具条被套上 height:6px + overflow:hidden —— 月份选择器和页签全被裁掉；
+  // BarList 的每一根条也被压成一条线，文字全部叠在一起。
+  // 症状很吓人（整块 UI 糊掉），原因却只是一个重名的类。
+  const files = []
+  for (const d of ['components', 'views']) {
+    const p = path.resolve(HERE, '..', 'src', d)
+    for (const f of await fs.readdir(p)) if (f.endsWith('.vue')) files.push(path.join(p, f))
+  }
+  ok('扫到了组件与视图', files.length >= 15, `${files.length} 个 .vue`)
+
+  const appCss = await fs.readFile(path.resolve(HERE, '..', 'src', 'styles', 'app.css'), 'utf8')
+  const globalCls = new Set([...appCss.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map((m) => m[1]))
+  ok('读到了全局样式表', globalCls.size > 100, `${globalCls.size} 个类名`)
+
+  // 允许复用的基础类：组件只在自己这边补几笔，不改结构（比如 .input 加个内边距）
+  const ALLOW = new Set(['field', 'input', 'is-error', 'pill', 'page-head', 'card__ft'])
+
+  const hits = []
+  for (const f of files) {
+    const txt = await fs.readFile(f, 'utf8')
+    const m = txt.match(/<style scoped>([\s\S]*?)<\/style>/)
+    if (!m) continue
+    // 先去掉注释再扫，否则注释里提到某个类名会误报
+    const css = m[1].replace(/\/\*[\s\S]*?\*\//g, '')
+    const local = new Set([...css.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map((x) => x[1]))
+    const bad = [...local].filter((c) => globalCls.has(c) && !ALLOW.has(c))
+    if (bad.length) hits.push(`${path.basename(f)}: ${bad.join(', ')}`)
+  }
+  eq('没有 scoped 类名与全局类名重名', hits, [])
+}
 console.log('\n=== 校验规则清单（防止某条规则被静默删掉）===')
 {
   // 这类丢失的症状很隐蔽：功能看着还在，就是不拦了。
