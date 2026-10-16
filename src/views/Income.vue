@@ -9,16 +9,29 @@
 import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import Chips from '../components/Chips.vue'
+import MonthPicker from '../components/MonthPicker.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { trips, setTripSettled, removeTrip } from '../store/trips.js'
 import { findRoute } from '../store/routes.js'
 import { findDriver } from '../store/drivers.js'
 import { findVehicle } from '../store/vehicles.js'
 import { tripCost } from '../utils/tripRules.js'
+import { monthOf } from '../utils/costModel.js'
+import { query, setQuery } from '../router.js'
 import { num, yuan } from '../utils/format.js'
 
 /** 默认只看待结算 —— 这个页面的意义就是盯没收到的钱 */
 const filter = ref('unsettled') // unsettled | settled | all
+/**
+ * 月份：默认「全部」，也写进 hash 可以深链接（比如书签「这个月还差多少没收」）。
+ * 收账时最关心的是「一共还差多少没收」，所以默认给全量；
+ * 想按月对账时再挑具体月份。
+ */
+const month = ref(query('month') || 'all')
+function setMonth(v) {
+  month.value = v
+  setQuery('month', v)
+}
 const q = ref('')
 const pendingDelete = ref(null)
 const toast = ref('')
@@ -30,9 +43,14 @@ function showToast(msg) {
   toastTimer = setTimeout(() => (toast.value = ''), 2400)
 }
 
+/* ---------------- 按月份限定范围 ---------------- */
+const scoped = computed(() =>
+  month.value === 'all' ? trips : trips.filter((t) => monthOf(t.date) === month.value)
+)
+
 /* ---------------- 每趟的钱 ---------------- */
 const rows = computed(() =>
-  trips.map((t) => ({
+  scoped.value.map((t) => ({
     t,
     route: findRoute(t.routeId),
     driver: findDriver(t.driverId),
@@ -101,15 +119,23 @@ const cards = computed(() => {
   ]
 })
 
+/** 月份下拉用：所有出现过趟次的月份（不受当前选择影响，否则选完就回不去了） */
+const months = computed(() => {
+  const set = new Set()
+  for (const t of trips) if (t.date) set.add(monthOf(t.date))
+  return [...set].sort().reverse()
+})
+
 /* ---------------- 按月份看 ---------------- */
+/** 始终基于**全部**趟次 —— 这是用来跳月份的导航，不该被当前选择过滤掉 */
 const byMonth = computed(() => {
   const map = new Map()
-  for (const r of rows.value) {
-    const m = String(r.t.date).slice(0, 7) || '未知'
+  for (const t of trips) {
+    const m = String(t.date).slice(0, 7) || '未知'
     if (!map.has(m)) map.set(m, { month: m, unsettled: 0, settled: 0, count: 0, unsettledCount: 0 })
     const g = map.get(m)
-    const money = r.cost.revenue
-    if (r.t.settled) g.settled += money
+    const money = tripCost(t).revenue
+    if (t.settled) g.settled += money
     else {
       g.unsettled += money
       if (money > 0) g.unsettledCount++
@@ -200,14 +226,20 @@ const routeText = (r) => (r ? `${r.from} → ${r.to}` : '（路线已删除）')
       </div>
     </div>
 
-    <!-- 按月份 -->
-    <div v-if="byMonth.length" class="card">
+    <!-- 按月份：点一行就跳到那个月（看「全部」时才有意义，所以选中具体月份后收起） -->
+    <div v-if="byMonth.length > 1 && month === 'all'" class="card">
       <div class="card__hd">
         <div class="card__title"><Icon name="calendar" :size="15" />按月份看</div>
-        <div class="card__sub spacer">{{ byMonth.length }} 个月</div>
+        <div class="card__sub spacer">{{ byMonth.length }} 个月 · 点一行跳到那个月</div>
       </div>
       <div class="card__bd" style="padding: 0">
-        <div v-for="m in byMonth" :key="m.month" class="mrow">
+        <button
+          v-for="m in byMonth"
+          :key="m.month"
+          type="button"
+          class="mrow mrow--btn"
+          @click="setMonth(m.month)"
+        >
           <span class="mrow__m">{{ m.month }}</span>
           <span class="mrow__n">{{ m.count }} 趟</span>
           <span class="mrow__u">
@@ -216,14 +248,18 @@ const routeText = (r) => (r ? `${r.from} → ${r.to}` : '（路线已删除）')
           </span>
           <span class="mrow__s">已结 ¥{{ num(m.settled, 0) }}</span>
           <span class="mrow__t">合计 ¥{{ num(m.total, 0) }}</span>
-        </div>
+          <Icon name="chevR" :size="13" :sw="2.2" />
+        </button>
       </div>
     </div>
 
-    <!-- 工具条 -->
+    <!-- 月份 + 工具条 -->
     <div class="card">
       <div class="card__bd" style="padding: 14px 16px">
-        <div class="vsearch">
+        <div class="inbar">
+          <MonthPicker :model-value="month" allow-all :months-with-data="months" noun="运费" @update:model-value="setMonth" />
+        </div>
+        <div class="vsearch mt10">
           <Icon name="search" :size="15" />
           <input v-model="q" class="input" placeholder="搜索路线 / 司机 / 车牌" />
           <button v-if="q" class="vsearch__x" aria-label="清空" @click="q = ''">
@@ -442,6 +478,31 @@ const routeText = (r) => (r ? `${r.from} → ${r.to}` : '（路线已删除）')
 }
 .mrow:last-child {
   border-bottom: 0;
+}
+.mrow--btn {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: background var(--dur-1) var(--ease);
+}
+.mrow--btn:hover {
+  background: var(--surface-hover);
+}
+.mrow--btn > svg {
+  color: var(--ink-4);
+  flex: 0 0 auto;
+}
+.inbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 .mrow__m {
   font-weight: 700;

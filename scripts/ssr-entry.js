@@ -924,6 +924,23 @@ console.log('\n=== 收入 · 运费结算 ===')
     ok('有运费明细表', inc.includes('运费明细'))
     ok('说明了成本要填单价才算得准', inc.includes('油费单价'))
     notContains('收入页不显示油耗指标', inc, '每吨百公里')
+    // 月份自由选择（含「全部」）
+    ok('收入页有月份选择器', inc.includes('mp__input') && inc.includes('type="month"'))
+    ok('收入页可以选「全部」', inc.includes('全部'))
+    ok('说明了点月份行可以跳转', inc.includes('点一行跳到那个月'))
+
+    // 按月份筛选确实生效（月份也走 hash，可深链接）
+    current.value = '/income'
+    location.hash = '#/income?month=2026-10'
+    const oct = await mount(App, undefined, '收入页 · 只看 10 月', 3000)
+    if (oct) {
+      ok('10 月只剩 2 趟', oct.includes('2 趟'))
+      notContains('10 月看不到 9 月那趟的金额', oct, '1,500')
+      ok('10 月待结算仍是 5000', oct.includes('5,000'))
+      ok('只看单月时收起月份导航表', !oct.includes('点一行跳到那个月'))
+    }
+    current.value = '/income'
+    location.hash = '#/income'
   }
   clearTrips()
   clearRoutes()
@@ -993,7 +1010,38 @@ console.log('\n=== 成本模块 ===')
     ok('有添加成本入口', page.includes('添加成本'))
     ok('说明里点出折旧口径', page.includes('5 年直线法') && page.includes('残值 10%'))
     ok('说明里点出没填单价会让油耗成本偏低', page.includes('没填单价的趟次算不出油费'))
+    // 月份自由选择
+    ok('有月份选择器', page.includes('mp__input') && page.includes('type="month"'))
+    ok('月份选择器支持前后翻月', page.includes('上一个月') && page.includes('下一个月'))
+    ok('有「本月」快捷按钮', page.includes('本月'))
+    ok('总览/按车辆两个页签都在', page.includes('总览') && page.includes('按车辆'))
+    ok('总览默认显示饼图', page.includes('成本构成') && page.includes('donut__arc'))
+    ok('总览里有「看全部」入口', page.includes('看全部'))
   }
+
+  // 按车辆：独立视图，靠 hash 参数深链接进去
+  current.value = '/costs'
+  location.hash = '#/costs?view=vehicle'
+  const vp = await mount(App, undefined, '成本页 · 按车辆', 3200)
+  if (vp) {
+    ok('切到按车辆视图', vp.includes('逐车成本'))
+    ok('按车辆不再显示饼图', !vp.includes('donut__arc'))
+    for (const col of ['折旧', '油耗', '过路费', '配件', '证件', '合计', '占比']) ok(`逐车表有「${col}」列`, vp.includes(col))
+    // 图标渲染出来的是 SVG path，不是图标名，所以按表头按钮数量判断
+    // （注意不能数 "thbtn" —— 数字列的 class 是 "thbtn thbtn--r"，会被多数一遍）
+    const thCount = (vp.match(/class="thbtn/g) || []).length
+    ok('表头可排序（车牌 + 6 个成本列）', thCount === 7, `${thCount} 个可排序表头`)
+    ok('有表尾合计行', vp.includes('<tfoot') && vp.includes('合计 1 台'))
+    ok('每行有占比', vp.includes('100.0%') || vp.includes('%'))
+    ok('行内画了迷你堆叠条', vp.includes('ministack'))
+    ok('有搜索框', vp.includes('搜索车牌'))
+    ok('可在「只看有成本的」与「全部车辆」间切换', vp.includes('只看有成本的') && vp.includes('全部车辆'))
+    // 该车合计 = 折旧 + 油耗(100×7.5) + 过路费 120 + 配件 4200 + 证件 1800
+    const expectTotal = Math.round(s.depreciation + 750 + 120 + 6000).toLocaleString('en-US')
+    ok('逐车合计金额正确', vp.includes(expectTotal), `期望出现 ¥${expectTotal}`)
+  }
+  location.hash = '#/costs'
+  current.value = '/costs'
 
   // 表单：用途决定要不要选车
   const cf1 = await mount(CostForm, { open: true, cost: null }, '成本表单 · 新增', 500)

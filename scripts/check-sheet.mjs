@@ -510,8 +510,15 @@ console.log('\n=== 日期输入框：点整块能弹出选择器 ===')
   const d = mk('date')
   ok('isDateInput 认得 date', isDateInput(d))
   ok('isDateInput 认得 datetime-local', isDateInput(mk('datetime-local')))
+  // 回归：原先用 startsWith('date') 判断，month / week / time / datetime-local 全被漏掉，
+  // 表现就是月份选择器「点了没反应」
+  ok('isDateInput 认得 month', isDateInput(mk('month')))
+  ok('isDateInput 认得 week', isDateInput(mk('week')))
+  ok('isDateInput 认得 time', isDateInput(mk('time')))
+  ok('isDateInput 大小写不敏感', isDateInput(mk('MONTH')))
   ok('isDateInput 不认 text', !isDateInput(mk('text')))
   ok('isDateInput 不认 null', !isDateInput(null))
+  eq('月份框也能点开选择器', (() => { const m = mk('month'); openDatePicker({ currentTarget: m }); return m.opened })(), 1)
 
   openDatePicker({ currentTarget: d })
   eq('点一下就调用 showPicker', d.opened, 1)
@@ -545,7 +552,7 @@ console.log('\n=== 每个日期输入框都挂了弹出处理（回归）===')
   let count = 0
   for (const f of files) {
     const txt = await fs.readFile(path.join(dir, f), 'utf8')
-    const tags = txt.match(/<input[^>]*type="date"[^>]*>/g) || []
+    const tags = txt.match(/<input[^>]*type="(?:date|month|week|time|datetime-local)"[^>]*>/g) || []
     for (const tag of tags) {
       count++
       if (!tag.includes('@click="openDatePicker"')) missing.push(`${f} ← ${tag.replace(/\s+/g, ' ').slice(0, 70)}`)

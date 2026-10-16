@@ -13,6 +13,7 @@ const P = {
   gauge: '<path d="M3.6 18.4a8.4 8.4 0 1 1 16.8 0"/><path d="M12 18.4l4.6-6.2"/><circle cx="12" cy="18.4" r="1.5" fill="currentColor" stroke="none"/>',
   report: '<rect x="3.6" y="3.8" width="16.8" height="16.4" rx="2.4"/><path d="M8 16.4v-4.2M12 16.4V7.6M16 16.4v-6.2"/>',
   cost: '<ellipse cx="12" cy="6.6" rx="7.6" ry="3"/><path d="M4.4 6.6v5.2c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.6"/><path d="M4.4 11.8v5.2c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3v-5.2"/>',
+  chevL: '<path d="M14.4 6l-6 6 6 6"/>',
   truck: '<path d="M2.6 7.4h10.8v9.2H2.6z"/><path d="M13.4 10.4h3.9l3.1 3.1v3.1h-7z"/><circle cx="7" cy="18.4" r="1.9"/><circle cx="16.6" cy="18.4" r="1.9"/>',
   driver: '<circle cx="12" cy="8.2" r="3.5"/><path d="M5.2 20.4c0-3.7 3-6.3 6.8-6.3s6.8 2.6 6.8 6.3"/>',
   fuel: '<path d="M4.6 20.2V6a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v14.2"/><path d="M3 20.2h12.2"/><path d="M13.6 9.4h2.6a2 2 0 0 1 2 2v4.4a1.5 1.5 0 0 0 3 0v-6.1l-2.6-3"/><path d="M7 8.2h4.1v4H7z"/>',

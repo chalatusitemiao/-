@@ -9,42 +9,54 @@
  *   过路费   —— 趟次的过路费
  *   手工成本 —— 配件 / 证件 / 其他，手动录入
  *
- * 折旧和人工是「按月」的概念，其余是按日的流水，所以统一按月份看。
+ * 两个视图：
+ *   总览   —— 汇总卡 + 成本构成饼图 + 手工成本明细
+ *   按车辆 —— 一张完整的逐车成本表（车多的时候靠排序 + 搜索 + 筛选来找）
+ * 车辆一多，塞在总览里的一条小榜根本看不过来，所以把它独立成一个视图。
  */
 import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import Chips from '../components/Chips.vue'
 import DonutChart from '../components/DonutChart.vue'
 import BarList from '../components/BarList.vue'
+import MonthPicker from '../components/MonthPicker.vue'
 import CostForm from '../components/CostForm.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import { vehicles } from '../store/vehicles.js'
+import { vehicles, findVehicle } from '../store/vehicles.js'
 import { drivers } from '../store/drivers.js'
 import { trips } from '../store/trips.js'
 import { costs, addCost, updateCost, removeCost } from '../store/costs.js'
-import { findVehicle } from '../store/vehicles.js'
-import { costSummary, costBreakdown, availableMonths } from '../utils/costModel.js'
+import { costSummary, costBreakdown, availableMonths, monthOf } from '../utils/costModel.js'
 import { COST_COLORS, purposeName } from '../data/costs.js'
-import { num, yuan } from '../utils/format.js'
-import { monthOf } from '../utils/costModel.js'
+import { query, setQuery } from '../router.js'
+import { num } from '../utils/format.js'
 
-/* ---------------- 月份 ---------------- */
+/* ---------------- 月份（也写进 hash，可深链接） ---------------- */
 const months = computed(() => availableMonths({ trips, costs }))
-const month = ref(months.value[0])
+const month = ref(query('month') || months.value[0])
+function setMonth(v) {
+  month.value = v
+  setQuery('month', v)
+}
 
-/** 月份选项显示成「2026 年 10 月」，近 6 个月用短标签 */
-const monthOptions = computed(() => {
-  const list = months.value.slice(0, 12)
-  return list.map((m, i) => {
-    const [y, mm] = m.split('-')
-    return { key: m, name: i === 0 ? `本月 ${mm} 月` : `${y.slice(2)} 年 ${Number(mm)} 月` }
-  })
-})
+/* ---------------- 视图（写进 hash，可深链接） ---------------- */
+const view = ref(query('view') === 'vehicle' ? 'vehicle' : 'overview') // overview | vehicle
+function setView(v) {
+  view.value = v
+  setQuery('view', v === 'vehicle' ? 'vehicle' : null)
+}
+const q = ref('')
+const onlyWithCost = ref(true)
+/** 按车辆视图的排序 */
+const sortKey = ref('total')
+const sortDir = ref('desc')
 
 /* ---------------- 汇总 ---------------- */
 const data = computed(() => ({ vehicles, drivers, trips, costs }))
 const summary = computed(() => costSummary(data.value, month.value))
 const breakdown = computed(() => costBreakdown(summary.value))
+
+const pct = (part, whole) => (whole ? ((part / whole) * 100).toFixed(0) + '%' : '—')
 
 const cards = computed(() => {
   const s = summary.value
@@ -59,7 +71,7 @@ const cards = computed(() => {
       l: '车辆折旧',
       v: s.depreciation ? '¥' + num(s.depreciation, 0) : '—',
       s: s.depreciation
-        ? `${vehicles.length} 台在册 · 占 ${pct(s.depreciation, s.total)}`
+        ? `${s.vehicleRows.filter((v) => v.depreciation > 0).length} 台在计提 · 占 ${pct(s.depreciation, s.total)}`
         : '这个月没有在计提折旧的车',
     },
     {
@@ -82,30 +94,85 @@ const cards = computed(() => {
   ]
 })
 
-const pct = (part, whole) => (whole ? ((part / whole) * 100).toFixed(0) + '%' : '—')
-
-/* ---------------- 按车辆 ---------------- */
-const vehicleBars = computed(() =>
+/* ---------------- 总览里的前几名（点「看全部」切到按车辆） ---------------- */
+const topBars = computed(() =>
   summary.value.vehicleRows
     .filter((v) => v.total > 0)
-    .map((v) => {
-      const segs = [
+    .map((v) => ({
+      key: v.id,
+      label: v.plate,
+      sub: v.type,
+      value: v.total,
+      segments: [
         { key: 'dep', label: '折旧', value: v.depreciation, color: COST_COLORS.depreciation },
         { key: 'fuel', label: '油耗', value: v.fuel, color: COST_COLORS.fuel },
         { key: 'toll', label: '过路费', value: v.toll, color: COST_COLORS.toll },
         { key: 'part', label: '配件', value: v.part, color: COST_COLORS.part },
         { key: 'doc', label: '证件', value: v.doc, color: COST_COLORS.doc },
-      ].filter((s) => s.value > 0)
-      return {
-        key: v.id,
-        label: v.plate,
-        sub: v.type,
-        value: v.total,
-        segments: segs,
-        raw: v,
-      }
-    })
+      ].filter((s) => s.value > 0),
+    }))
 )
+const costVehicleCount = computed(() => topBars.value.length)
+
+/* ---------------- 按车辆：完整表 ---------------- */
+const vehicleColumns = [
+  { key: 'depreciation', label: '折旧' },
+  { key: 'fuel', label: '油耗' },
+  { key: 'toll', label: '过路费' },
+  { key: 'part', label: '配件' },
+  { key: 'doc', label: '证件' },
+  { key: 'total', label: '合计' },
+]
+
+const vehicleRows = computed(() => {
+  const kw = q.value.trim().toLowerCase()
+  let rows = summary.value.vehicleRows
+  if (onlyWithCost.value) rows = rows.filter((v) => v.total > 0)
+  if (kw) {
+    rows = rows.filter(
+      (v) => String(v.plate).toLowerCase().includes(kw) || String(v.type).toLowerCase().includes(kw)
+    )
+  }
+  const k = sortKey.value
+  const dir = sortDir.value === 'desc' ? -1 : 1
+  return [...rows].sort((a, b) => {
+    if (k === 'plate') return String(a.plate).localeCompare(String(b.plate), 'zh') * dir
+    return ((Number(a[k]) || 0) - (Number(b[k]) || 0)) * dir
+  })
+})
+
+function sortBy(k) {
+  if (sortKey.value === k) sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
+  else {
+    sortKey.value = k
+    sortDir.value = k === 'plate' ? 'asc' : 'desc'
+  }
+}
+/** 表头/卡片上那根细条：一眼看出这台车的钱花在哪 */
+const segsOf = (v) =>
+  [
+    { key: 'dep', value: v.depreciation, color: COST_COLORS.depreciation },
+    { key: 'fuel', value: v.fuel, color: COST_COLORS.fuel },
+    { key: 'toll', value: v.toll, color: COST_COLORS.toll },
+    { key: 'part', value: v.part, color: COST_COLORS.part },
+    { key: 'doc', value: v.doc, color: COST_COLORS.doc },
+  ].filter((s) => s.value > 0)
+const rowMax = computed(() => Math.max(1, ...vehicleRows.value.map((v) => v.total)))
+const share = (v) => (summary.value.total ? ((v.total / summary.value.total) * 100).toFixed(1) + '%' : '—')
+
+const vehicleTotals = computed(() => {
+  const rows = vehicleRows.value
+  const sum = (k) => rows.reduce((a, v) => a + (Number(v[k]) || 0), 0)
+  return {
+    count: rows.length,
+    depreciation: sum('depreciation'),
+    fuel: sum('fuel'),
+    toll: sum('toll'),
+    part: sum('part'),
+    doc: sum('doc'),
+    total: sum('total'),
+  }
+})
 
 /* ---------------- 手工成本明细 ---------------- */
 const manualRows = computed(() =>
@@ -134,7 +201,7 @@ function onSaved({ payload, id }) {
     addCost(payload)
     // 新记的这笔如果不在当前月份，自动跳过去，否则用户会以为没保存成功
     const m = monthOf(payload.date)
-    if (m && m !== month.value && months.value.includes(m)) month.value = m
+    if (m && m !== month.value) month.value = m
   }
   formOpen.value = false
   editing.value = null
@@ -164,7 +231,7 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
       <div>
         <h1 class="page-head__ttl">成本</h1>
         <div class="page-head__desc">
-          折旧 + 人工 + 油耗 + 过路费 + 手工录入 · 按月份看
+          折旧 + 人工 + 油耗 + 过路费 + 手工录入
         </div>
       </div>
       <button class="btn btn--primary" @click="openNew">
@@ -187,148 +254,278 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
     </div>
 
     <template v-else>
-      <!-- 月份 -->
-      <div class="chips-row">
-        <Chips v-model="month" :options="monthOptions" />
+      <!-- 月份 + 视图 -->
+      <div class="bar">
+        <MonthPicker :model-value="month" :months-with-data="months" noun="成本" @update:model-value="setMonth" />
+        <div class="bar__sp" />
+        <Chips
+          :model-value="view"
+          @update:model-value="setView"
+          :options="[
+            { key: 'overview', name: '总览' },
+            { key: 'vehicle', name: '按车辆', count: costVehicleCount },
+          ]"
+        />
       </div>
 
-      <!-- 汇总 -->
-      <div class="grid grid--kpi">
-        <div
-          v-for="(c, i) in cards"
-          :key="c.l"
-          class="vsum reveal"
-          :style="{ '--d': i * 45 + 'ms' }"
-        >
-          <div class="vsum__l">{{ c.l }}</div>
-          <div class="vsum__v" :class="[c.tone ? 'is-' + c.tone : '', { 'is-placeholder': c.v === '—' }]">
-            {{ c.v }}
+      <!-- ============ 总览 ============ -->
+      <template v-if="view === 'overview'">
+        <div class="grid grid--kpi">
+          <div v-for="(c, i) in cards" :key="c.l" class="vsum reveal" :style="{ '--d': i * 45 + 'ms' }">
+            <div class="vsum__l">{{ c.l }}</div>
+            <div class="vsum__v" :class="[c.tone ? 'is-' + c.tone : '', { 'is-placeholder': c.v === '—' }]">{{ c.v }}</div>
+            <div class="vsum__s">{{ c.s }}</div>
           </div>
-          <div class="vsum__s">{{ c.s }}</div>
         </div>
-      </div>
 
-      <!-- 图表：构成 + 按车辆 -->
-      <div class="charts">
-        <div class="card">
-          <div class="card__hd">
-            <div class="card__title"><Icon name="cost" :size="15" />成本构成</div>
-            <div class="card__sub spacer">{{ breakdown.length }} 个来源</div>
-          </div>
-          <div class="card__bd">
-            <DonutChart
-              v-if="breakdown.length"
-              :items="breakdown"
-              :center-label="month + ' 合计'"
-              :center-value="'¥' + num(summary.total, 0)"
-              :format="(v) => '¥' + num(v, 0)"
-            />
-            <div v-else class="empty empty--sm">
-              <div class="empty__d">这个月还没有产生任何成本</div>
+        <div class="charts">
+          <div class="card">
+            <div class="card__hd">
+              <div class="card__title"><Icon name="cost" :size="15" />成本构成</div>
+              <div class="card__sub spacer">{{ breakdown.length }} 个来源</div>
+            </div>
+            <div class="card__bd">
+              <DonutChart
+                v-if="breakdown.length"
+                :items="breakdown"
+                :center-label="month + ' 合计'"
+                :center-value="'¥' + num(summary.total, 0)"
+                :format="(v) => '¥' + num(v, 0)"
+              />
+              <div v-else class="empty empty--sm"><div class="empty__d">这个月还没有产生任何成本</div></div>
+            </div>
+            <div v-if="breakdown.length" class="card__ft">
+              <span class="legend-note">占比按金额算 · 折旧与人工按月计提，不随趟次波动</span>
             </div>
           </div>
-          <div v-if="breakdown.length" class="card__ft">
-            <span class="legend-note">占比按金额算 · 折旧与人工是按月计提，不随趟次波动</span>
-          </div>
-        </div>
 
-        <div class="card">
-          <div class="card__hd">
-            <div class="card__title"><Icon name="truck" :size="15" />按车辆</div>
-            <div class="card__sub spacer">{{ vehicleBars.length }} 台有成本</div>
-          </div>
-          <div class="card__bd">
-            <BarList
-              :items="vehicleBars"
-              :limit="8"
-              :format="(v) => '¥' + num(v, 0)"
-            />
-          </div>
-          <div v-if="vehicleBars.length" class="card__ft">
-            <div class="seglegend">
-              <span v-for="s in [
-                { l: '折旧', c: COST_COLORS.depreciation },
-                { l: '油耗', c: COST_COLORS.fuel },
-                { l: '过路费', c: COST_COLORS.toll },
-                { l: '配件', c: COST_COLORS.part },
-                { l: '证件', c: COST_COLORS.doc },
-              ]" :key="s.l" class="seglegend__i">
-                <i :style="{ background: s.c }" />{{ s.l }}
-              </span>
+          <div class="card">
+            <div class="card__hd">
+              <div class="card__title"><Icon name="truck" :size="15" />成本最高的车</div>
+              <div class="card__sub spacer">共 {{ costVehicleCount }} 台有成本</div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 手工成本 -->
-      <div class="card card--clip">
-        <div class="card__hd">
-          <div class="card__title"><Icon name="wrench" :size="15" />手工录入的成本</div>
-          <div class="card__sub spacer">{{ manualRows.length }} 笔 · ¥{{ num(summary.manual, 0) }}</div>
-          <button class="btn btn--ghost btn--sm" @click="openNew"><Icon name="plus" :size="13" :sw="2.3" />添加</button>
-        </div>
-
-        <template v-if="manualRows.length">
-          <div class="tbl-wrap vonly-desktop">
-            <table class="tbl" style="min-width: 760px">
-              <thead>
-                <tr>
-                  <th>日期</th>
-                  <th style="text-align: left">用途</th>
-                  <th style="text-align: left">车辆</th>
-                  <th style="text-align: left">备注</th>
-                  <th>金额</th>
-                  <th style="width: 150px">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="r in manualRows" :key="r.c.id">
-                  <td class="num">{{ r.c.date }}</td>
-                  <td style="text-align: left">
-                    <span class="ptag" :class="'ptag--' + r.c.purpose">{{ purposeName(r.c.purpose) }}</span>
-                  </td>
-                  <td style="text-align: left">
-                    <span v-if="r.vehicle" class="num">{{ r.vehicle.plate }}</span>
-                    <span v-else class="dim">不挂车</span>
-                  </td>
-                  <td style="text-align: left" class="note-cell">{{ r.c.note || '—' }}</td>
-                  <td class="num strong">¥{{ num(r.c.amount) }}</td>
-                  <td>
-                    <div class="rowacts">
-                      <button class="btn btn--ghost btn--sm" @click="openEdit(r.c)"><Icon name="wrench" :size="12" />编辑</button>
-                      <button class="btn btn--danger btn--sm" @click="pendingDelete = r"><Icon name="close" :size="12" :sw="2.2" />删除</button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="vonly-mobile">
-            <div v-for="r in manualRows" :key="r.c.id" class="vcard">
-              <div class="vcard__hd">
-                <span class="ptag" :class="'ptag--' + r.c.purpose">{{ purposeName(r.c.purpose) }}</span>
-                <span class="rname">{{ r.vehicle ? r.vehicle.plate : '不挂车' }}</span>
-                <span class="rdate">{{ r.c.date }}</span>
+            <div class="card__bd">
+              <BarList :items="topBars" :limit="6" :format="(v) => '¥' + num(v, 0)" />
+            </div>
+            <div class="card__ft card__ft--between">
+              <div class="seglegend">
+                <span
+                  v-for="s in [
+                    { l: '折旧', c: COST_COLORS.depreciation },
+                    { l: '油耗', c: COST_COLORS.fuel },
+                    { l: '过路费', c: COST_COLORS.toll },
+                    { l: '配件', c: COST_COLORS.part },
+                    { l: '证件', c: COST_COLORS.doc },
+                  ]"
+                  :key="s.l"
+                  class="seglegend__i"
+                ><i :style="{ background: s.c }" />{{ s.l }}</span>
               </div>
-              <div class="vcard__amt">¥{{ num(r.c.amount) }}</div>
-              <div v-if="r.c.note" class="vcard__note">{{ r.c.note }}</div>
-              <div class="vcard__acts">
-                <button class="btn btn--ghost btn--sm flex1" @click="openEdit(r.c)"><Icon name="wrench" :size="13" />编辑</button>
-                <button class="btn btn--danger btn--sm flex1" @click="pendingDelete = r"><Icon name="close" :size="13" :sw="2.2" />删除</button>
-              </div>
+              <button class="btn btn--ghost btn--sm" @click="setView('vehicle')">
+                看全部 {{ costVehicleCount }} 台<Icon name="chevR" :size="13" :sw="2.2" />
+              </button>
             </div>
           </div>
-        </template>
+        </div>
 
-        <div v-else class="empty empty--sm">
-          <div class="empty__t">这个月还没有手工录入的成本</div>
-          <div class="empty__d">配件、证件这类支出记在这里，会算进对应车辆的成本</div>
-          <div class="empty__acts">
-            <button class="btn btn--primary btn--sm" @click="openNew"><Icon name="plus" :size="13" :sw="2.3" />添加成本</button>
+        <!-- 手工成本 -->
+        <div class="card card--clip">
+          <div class="card__hd">
+            <div class="card__title"><Icon name="wrench" :size="15" />手工录入的成本</div>
+            <div class="card__sub spacer">{{ manualRows.length }} 笔 · ¥{{ num(summary.manual, 0) }}</div>
+            <button class="btn btn--ghost btn--sm" @click="openNew"><Icon name="plus" :size="13" :sw="2.3" />添加</button>
+          </div>
+
+          <template v-if="manualRows.length">
+            <div class="tbl-wrap vonly-desktop">
+              <table class="tbl" style="min-width: 760px">
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th style="text-align: left">用途</th>
+                    <th style="text-align: left">车辆</th>
+                    <th style="text-align: left">备注</th>
+                    <th>金额</th>
+                    <th style="width: 150px">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in manualRows" :key="r.c.id">
+                    <td class="num">{{ r.c.date }}</td>
+                    <td style="text-align: left"><span class="ptag" :class="'ptag--' + r.c.purpose">{{ purposeName(r.c.purpose) }}</span></td>
+                    <td style="text-align: left">
+                      <span v-if="r.vehicle" class="num">{{ r.vehicle.plate }}</span>
+                      <span v-else class="dim">不挂车</span>
+                    </td>
+                    <td style="text-align: left" class="note-cell">{{ r.c.note || '—' }}</td>
+                    <td class="num strong">¥{{ num(r.c.amount) }}</td>
+                    <td>
+                      <div class="rowacts">
+                        <button class="btn btn--ghost btn--sm" @click="openEdit(r.c)"><Icon name="wrench" :size="12" />编辑</button>
+                        <button class="btn btn--danger btn--sm" @click="pendingDelete = r"><Icon name="close" :size="12" :sw="2.2" />删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="vonly-mobile">
+              <div v-for="r in manualRows" :key="r.c.id" class="vcard">
+                <div class="vcard__hd">
+                  <span class="ptag" :class="'ptag--' + r.c.purpose">{{ purposeName(r.c.purpose) }}</span>
+                  <span class="rname">{{ r.vehicle ? r.vehicle.plate : '不挂车' }}</span>
+                  <span class="rdate">{{ r.c.date }}</span>
+                </div>
+                <div class="vcard__amt">¥{{ num(r.c.amount) }}</div>
+                <div v-if="r.c.note" class="vcard__note">{{ r.c.note }}</div>
+                <div class="vcard__acts">
+                  <button class="btn btn--ghost btn--sm flex1" @click="openEdit(r.c)"><Icon name="wrench" :size="13" />编辑</button>
+                  <button class="btn btn--danger btn--sm flex1" @click="pendingDelete = r"><Icon name="close" :size="13" :sw="2.2" />删除</button>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="empty empty--sm">
+            <div class="empty__t">这个月还没有手工录入的成本</div>
+            <div class="empty__d">配件、证件这类支出记在这里，会算进对应车辆的成本</div>
+            <div class="empty__acts">
+              <button class="btn btn--primary btn--sm" @click="openNew"><Icon name="plus" :size="13" :sw="2.3" />添加成本</button>
+            </div>
           </div>
         </div>
-      </div>
+      </template>
+
+      <!-- ============ 按车辆 ============ -->
+      <template v-else>
+        <div class="card">
+          <div class="card__bd" style="padding: 14px 16px">
+            <div class="vsearch">
+              <Icon name="search" :size="15" />
+              <input v-model="q" class="input" placeholder="搜索车牌 / 车型" />
+              <button v-if="q" class="vsearch__x" aria-label="清空" @click="q = ''"><Icon name="close" :size="13" :sw="2.2" /></button>
+            </div>
+            <div class="mt10">
+              <Chips
+                v-model="onlyWithCost"
+                :options="[
+                  { key: true, name: '只看有成本的', count: costVehicleCount },
+                  { key: false, name: '全部车辆', count: vehicles.length },
+                ]"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="card card--clip">
+          <div class="card__hd">
+            <div class="card__title"><Icon name="truck" :size="15" />逐车成本</div>
+            <div class="card__sub spacer">
+              {{ vehicleTotals.count }} 台 · 合计 ¥{{ num(vehicleTotals.total, 0) }} ·
+              平均 ¥{{ num(vehicleTotals.total / Math.max(1, vehicleTotals.count), 0) }}
+            </div>
+          </div>
+
+          <template v-if="vehicleRows.length">
+            <div class="tbl-wrap vonly-desktop">
+              <table class="tbl tbl--sortable" style="min-width: 1040px">
+                <thead>
+                  <tr>
+                    <th style="text-align: left">
+                      <button class="thbtn" @click="sortBy('plate')">
+                        车牌 / 车型<Icon :name="sortKey === 'plate' ? (sortDir === 'desc' ? 'arrDown' : 'arrUp') : 'chevD'" :size="12" />
+                      </button>
+                    </th>
+                    <th v-for="col in vehicleColumns" :key="col.key" class="num">
+                      <button class="thbtn thbtn--r" @click="sortBy(col.key)">
+                        {{ col.label }}<Icon :name="sortKey === col.key ? (sortDir === 'desc' ? 'arrDown' : 'arrUp') : 'chevD'" :size="12" />
+                      </button>
+                    </th>
+                    <th class="num">占比</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="v in vehicleRows" :key="v.id">
+                    <td style="text-align: left">
+                      <div class="num strong">{{ v.plate }}</div>
+                      <div class="tbl__sub">{{ v.type }}</div>
+                    </td>
+                    <td class="num" :class="{ dim: !v.depreciation }">{{ v.depreciation ? '¥' + num(v.depreciation, 0) : '—' }}</td>
+                    <td class="num" :class="{ dim: !v.fuel }">{{ v.fuel ? '¥' + num(v.fuel, 0) : '—' }}</td>
+                    <td class="num" :class="{ dim: !v.toll }">{{ v.toll ? '¥' + num(v.toll, 0) : '—' }}</td>
+                    <td class="num" :class="{ dim: !v.part }">{{ v.part ? '¥' + num(v.part, 0) : '—' }}</td>
+                    <td class="num" :class="{ dim: !v.doc }">{{ v.doc ? '¥' + num(v.doc, 0) : '—' }}</td>
+                    <td class="num strong">
+                      ¥{{ num(v.total, 0) }}
+                      <!-- 一根细条：这台车的钱主要花在哪 -->
+                      <div class="ministack">
+                        <span
+                          v-for="s in segsOf(v)"
+                          :key="s.key"
+                          :style="{ width: (s.value / rowMax) * 100 + '%', background: s.color }"
+                        />
+                      </div>
+                    </td>
+                    <td class="num dim">{{ share(v) }}</td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td style="text-align: left">合计 {{ vehicleTotals.count }} 台</td>
+                    <td class="num">¥{{ num(vehicleTotals.depreciation, 0) }}</td>
+                    <td class="num">¥{{ num(vehicleTotals.fuel, 0) }}</td>
+                    <td class="num">¥{{ num(vehicleTotals.toll, 0) }}</td>
+                    <td class="num">¥{{ num(vehicleTotals.part, 0) }}</td>
+                    <td class="num">¥{{ num(vehicleTotals.doc, 0) }}</td>
+                    <td class="num strong">¥{{ num(vehicleTotals.total, 0) }}</td>
+                    <td class="num dim">100%</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div class="vonly-mobile">
+              <div v-for="v in vehicleRows" :key="v.id" class="vcard">
+                <div class="vcard__hd">
+                  <span class="rname">{{ v.plate }}</span>
+                  <span class="vtype">{{ v.type }}</span>
+                  <span class="vcard__tot">¥{{ num(v.total, 0) }}</span>
+                </div>
+                <div class="ministack ministack--wide">
+                  <span
+                    v-for="s in segsOf(v)"
+                    :key="s.key"
+                    :style="{ width: (s.value / rowMax) * 100 + '%', background: s.color }"
+                  />
+                </div>
+                <dl class="vcard__kv">
+                  <div><dt>折旧</dt><dd>{{ v.depreciation ? '¥' + num(v.depreciation, 0) : '—' }}</dd></div>
+                  <div><dt>油耗</dt><dd>{{ v.fuel ? '¥' + num(v.fuel, 0) : '—' }}</dd></div>
+                  <div><dt>过路费</dt><dd>{{ v.toll ? '¥' + num(v.toll, 0) : '—' }}</dd></div>
+                  <div><dt>配件</dt><dd>{{ v.part ? '¥' + num(v.part, 0) : '—' }}</dd></div>
+                  <div><dt>证件</dt><dd>{{ v.doc ? '¥' + num(v.doc, 0) : '—' }}</dd></div>
+                  <div><dt>占全队</dt><dd>{{ share(v) }}</dd></div>
+                </dl>
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="empty empty--sm">
+            <div class="empty__ico"><Icon name="truck" :size="22" /></div>
+            <div class="empty__t">{{ q ? '没有匹配的车辆' : '这个月没有车辆产生成本' }}</div>
+            <div class="empty__d">
+              {{ q ? '换个车牌或车型试试' : '折旧与人工是按月计提的，录入车辆和司机后这里就会有数据' }}
+            </div>
+            <div class="empty__acts">
+              <button v-if="q" class="btn btn--ghost btn--sm" @click="q = ''">清空搜索</button>
+              <button v-else-if="onlyWithCost && vehicles.length" class="btn btn--ghost btn--sm" @click="onlyWithCost = false">
+                看全部 {{ vehicles.length }} 台
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
 
       <div class="note">
         <Icon name="info" :size="15" />
@@ -340,12 +537,7 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
       </div>
     </template>
 
-    <CostForm
-      :open="formOpen"
-      :cost="editing"
-      @close="formOpen = false; editing = null"
-      @saved="onSaved"
-    />
+    <CostForm :open="formOpen" :cost="editing" @close="formOpen = false; editing = null" @saved="onSaved" />
 
     <ConfirmDialog
       :open="!!pendingDelete"
@@ -366,6 +558,18 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   gap: 12px;
   flex-wrap: wrap;
 }
+/* 月份 + 视图切换 */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.bar__sp {
+  flex: 1 1 auto;
+}
+
 .vsum {
   min-width: 0;
   padding: 14px 15px;
@@ -400,7 +604,6 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   line-height: 1.45;
 }
 
-/* 图表两栏 */
 .charts {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -415,6 +618,12 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   padding: 9px 16px 13px;
   border-top: 1px solid var(--line);
 }
+.card__ft--between {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .legend-note {
   font-size: 11.5px;
   color: var(--ink-3);
@@ -425,6 +634,7 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   gap: 4px 13px;
   font-size: 11.5px;
   color: var(--ink-3);
+  min-width: 0;
 }
 .seglegend__i {
   display: inline-flex;
@@ -437,7 +647,47 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   border-radius: 2.5px;
 }
 
-/* 用途标签 */
+/* 可排序表头 */
+.thbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.thbtn--r {
+  justify-content: flex-end;
+}
+.thbtn svg {
+  opacity: 0.45;
+}
+.tbl--sortable tfoot td {
+  font-weight: 650;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line-2);
+}
+
+/* 行内迷你堆叠条 */
+.ministack {
+  display: flex;
+  height: 4px;
+  margin-top: 5px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.ministack--wide {
+  height: 7px;
+  margin-top: 11px;
+}
+.ministack span {
+  height: 100%;
+}
+
 .ptag {
   display: inline-block;
   padding: 2px 8px;
@@ -474,7 +724,34 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   gap: 6px;
 }
 
-/* 移动端卡片 */
+.vsearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.vsearch > svg {
+  position: absolute;
+  left: 12px;
+  color: var(--ink-4);
+  pointer-events: none;
+}
+.vsearch .input {
+  padding-left: 35px;
+  padding-right: 34px;
+}
+.vsearch__x {
+  position: absolute;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  background: var(--surface-3);
+}
+
 .vonly-desktop {
   display: none;
 }
@@ -504,13 +781,35 @@ const hasAnyData = computed(() => vehicles.length || drivers.length || trips.len
   flex-wrap: wrap;
 }
 .rname {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 650;
+}
+.vcard__tot {
+  margin-left: auto;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .rdate {
   margin-left: auto;
   font-size: 11.5px;
   color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.vcard__kv {
+  margin: 11px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 14px;
+}
+.vcard__kv dt {
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.vcard__kv dd {
+  margin: 3px 0 0;
+  font-size: 13.5px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .vcard__amt {

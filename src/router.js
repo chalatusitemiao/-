@@ -46,4 +46,22 @@ export function query(key, fallback = null) {
   return v === null || v === '' ? fallback : v
 }
 
+/**
+ * 写入（或删除）一个查询参数，其余参数保留。
+ * 传 null / '' 表示删掉它。这样视图里的子页签也能被深链接与前进后退。
+ */
+export function setQuery(key, value) {
+  const hash = location.hash || '#' + TABS[0].path
+  const [path, qs = ''] = hash.replace(/^#/, '').split('?')
+  const params = new URLSearchParams(qs)
+  if (value === null || value === undefined || value === '') params.delete(key)
+  else params.set(key, String(value))
+  const next = params.toString()
+  const target = '#' + path + (next ? '?' + next : '')
+  if (target === hash) return
+  // replaceState 而不是改 hash：子页签切换不该污染历史记录
+  history.replaceState(null, '', target)
+  current.value = path || TABS[0].path
+}
+
 export const route = readonly(current)
